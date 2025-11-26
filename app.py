@@ -7,7 +7,7 @@ import io
 import pytz
 from datetime import datetime
 
-# --- 1. CONFIGURATION (NEW NAME) ---
+# --- 1. CONFIGURATION ---
 st.set_page_config(page_title="SniperTrade Live 🎯", layout="wide", page_icon="🎯")
 
 # --- 2. GLOBAL STORE ---
@@ -89,6 +89,7 @@ st.markdown("""
     .sl-txt { color: #ff4b4b; text-shadow: 0 0 5px rgba(255, 75, 75, 0.5); }
     
     .time-badge { font-size: 11px; color: #aaa; background: #222; padding: 2px 6px; border-radius: 4px; border: 1px solid #333; }
+    .indicator-row { color:#bbb; font-size:13px; margin-top:10px; border-top: 1px solid #333; padding-top: 5px; display: flex; justify-content: space-between;}
     
     .stButton>button { width: 100%; background-color: #262730; color: white; border: 1px solid #4c4c4c; }
 </style>
@@ -258,9 +259,9 @@ if store.access_token:
                         <span class="sl-txt">🛑 {stock['SL']}</span>
                         <span class="target-txt">🎯 {stock['Target']}</span>
                     </div>
-                    <div style="color:#bbb; font-size:12px; margin-top:8px; display:flex; justify-content:space-between;">
-                         <span>Vol: {stock['Vol_Ratio']}x</span>
-                         <span>Stoch: {stock['Stoch']}</span>
+                    <div class="indicator-row">
+                         <span>🌊 VWAP: {stock['VWAP']}</span>
+                         <span>⚡ Vol: {stock['Vol_Ratio']}x</span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -272,7 +273,7 @@ if store.access_token:
     st.subheader("📋 Recon Data (All Stocks)")
     if full_data:
         df_all = pd.DataFrame(full_data)
-        df_all = df_all[['Symbol', 'Price', 'Status', 'SL', 'Target', 'Vol_Ratio', 'Time']]
+        df_all = df_all[['Symbol', 'Price', 'Status', 'VWAP', 'SL', 'Target', 'Vol_Ratio', 'Time']]
         st.dataframe(df_all, use_container_width=True, hide_index=True)
 
 else:
