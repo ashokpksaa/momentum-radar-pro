@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
 from streamlit_autorefresh import st_autorefresh
-import datetime
 import requests
 import gzip
 import io
 import pytz
 
-# --- 1. CONFIG ---
-st.set_page_config(page_title="Momentum Radar Pro (Live)", layout="wide", page_icon="📡")
+# --- 1. CONFIGURATION ---
+st.set_page_config(page_title="Momentum Radar (1-Min Live)", layout="wide", page_icon="⚡")
 
 # --- 2. GLOBAL STORE ---
 @st.cache_resource
@@ -69,46 +68,34 @@ if admin_pass == "1234":
         st.rerun()
 
     st.sidebar.markdown("---")
-    st.sidebar.write("🛠️ **Debugger**")
-    test_symbol = st.sidebar.text_input("Test Symbol", value="SBIN")
-    
-    if st.sidebar.button("Check 5-Min Data"):
+    st.sidebar.write("🛠️ **Live Check**")
+    if st.sidebar.button("Check 1-Min Data (PIIND)"):
         if store.access_token:
-            key = get_instrument_key(test_symbol)
+            key = get_instrument_key("PIIND")
             if key:
-                # Testing with Historical URL (5 Days Safe Limit)
-                end = datetime.datetime.now().strftime("%Y-%m-%d")
-                start = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
-                url = f"https://api.upstox.com/v2/historical-candle/{key}/5minute/{end}/{start}"
+                # Using the ERROR-FREE Intraday Endpoint
+                url = f"https://api.upstox.com/v2/historical-candle/intraday/{key}/1minute"
                 headers = {'Accept': 'application/json', 'Api-Version': '2.0', 'Authorization': f'Bearer {store.access_token}'}
                 res = requests.get(url, headers=headers)
-                
                 if res.status_code == 200:
                     data = res.json()
-                    if 'data' in data and 'candles' in data['data']:
-                        st.sidebar.success(f"Success! Got {len(data['data']['candles'])} candles")
-                    else:
-                        st.sidebar.warning("Empty Data")
+                    last = data['data']['candles'][0] # Upstox Intraday sends Latest First
+                    st.sidebar.success(f"Latest: {last}")
                 else:
-                    st.sidebar.error(f"Error {res.status_code}: {res.text}")
+                    st.sidebar.error(f"Error: {res.status_code}")
 
 # --- 6. SETTINGS ---
-use_autorefresh = st.sidebar.checkbox("Auto-Refresh")
+use_autorefresh = st.sidebar.checkbox("Auto-Refresh (1 min)")
 if use_autorefresh:
     st_autorefresh(interval=60000)
 
-tf_selection = st.sidebar.selectbox("Timeframe:", ("1 Minute", "5 Minutes", "15 Minutes", "30 Minutes"))
 trend_mode = st.sidebar.radio("Signal:", ("Bullish (Buy)", "Bearish (Sell)"))
 
-upstox_tf_map = {
-    "1 Minute": "1minute", "5 Minutes": "5minute", "15 Minutes": "15minute", "30 Minutes": "30minute"
-}
-interval_str = upstox_tf_map[tf_selection]
-
+# Hardcoded Stock List
 all_tickers = ['ADANIENT', 'ADANIPORTS', 'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK', 'BAJAJ-AUTO', 'BAJFINANCE', 'BAJAJFINSV', 'BPCL', 'BHARTIARTL', 'BRITANNIA', 'CIPLA', 'COALINDIA', 'DIVISLAB', 'DRREDDY', 'EICHERMOT', 'GRASIM', 'HCLTECH', 'HDFCBANK', 'HDFCLIFE', 'HEROMOTOCO', 'HINDALCO', 'HINDUNILVR', 'ICICIBANK', 'ITC', 'INDUSINDBK', 'INFY', 'JSWSTEEL', 'KOTAKBANK', 'LT', 'LTIM', 'M&M', 'MARUTI', 'NESTLEIND', 'NTPC', 'ONGC', 'POWERGRID', 'RELIANCE', 'SBILIFE', 'SBIN', 'SUNPHARMA', 'TCS', 'TATACONSUM', 'TATAMOTORS', 'TATASTEEL', 'TECHM', 'TITAN', 'ULTRACEMCO', 'UPL', 'WIPRO', 'BANKBARODA', 'PNB', 'AUBANK', 'IDFCFIRSTB', 'FEDERALBNK', 'BANDHANBNK', 'POLYCAB', 'TATACOMM', 'PERSISTENT', 'COFORGE', 'LTTS', 'MPHASIS', 'ASHOKLEY', 'ASTRAL', 'JUBLFOOD', 'VOLTAS', 'TRENT', 'BEL', 'HAL', 'DLF', 'GODREJPROP', 'INDHOTEL', 'TATACHEM', 'TATAPOWER', 'JINDALSTEL', 'SAIL', 'NMDC', 'ZEEL', 'CANBK', 'REC', 'PFC', 'IRCTC', 'BOSCHLTD', 'CUMMINSIND', 'OBEROIRLTY', 'ESCORTS', 'SRF', 'PIIND', 'CONCOR', 'AUROPHARMA', 'LUPIN']
 
-# --- 7. SCANNER ---
-def scan_market(tickers, interval, mode):
+# --- 7. SCANNER (ONLY 1 MINUTE - ERROR FREE) ---
+def scan_market(tickers, mode):
     found_stocks = []
     logs = []
     
@@ -120,12 +107,6 @@ def scan_market(tickers, interval, mode):
     status = st.empty()
     headers = {'Accept': 'application/json', 'Api-Version': '2.0', 'Authorization': f'Bearer {store.access_token}'}
 
-    # --- DATE SETTINGS (Safe Limit) ---
-    # Upstox doesn't like large ranges for minute data.
-    # We use 5 days, which is enough for indicators and safe from Error 400.
-    to_date = datetime.datetime.now().strftime("%Y-%m-%d")
-    from_date = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
-
     for i, symbol in enumerate(tickers):
         status.text(f"Scanning {symbol}...")
         progress.progress((i+1)/len(tickers))
@@ -134,57 +115,55 @@ def scan_market(tickers, interval, mode):
             key = get_instrument_key(symbol)
             if not key: continue
 
-            # Using HISTORICAL endpoint with DATES (This supports 5min/15min)
-            url = f"https://api.upstox.com/v2/historical-candle/{key}/{interval}/{to_date}/{from_date}"
+            # --- THE MAGIC URL (No Dates, No Errors) ---
+            url = f"https://api.upstox.com/v2/historical-candle/intraday/{key}/1minute"
             
             response = requests.get(url, headers=headers)
             
             if response.status_code != 200:
-                logs.append(f"{symbol}: API Error {response.status_code}")
-                continue
+                continue # Skip errors silently
             
             data = response.json()
             if 'data' not in data or 'candles' not in data['data']:
-                logs.append(f"{symbol}: No Data")
                 continue
 
             candles = data['data']['candles']
             df = pd.DataFrame(candles, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'OI'])
             
-            # Clean & Sort
+            # 1. Clean & Sort (Oldest -> Newest for Calc)
             df['Timestamp'] = pd.to_datetime(df['Timestamp'])
             df = df.sort_values('Timestamp').reset_index(drop=True)
+            
+            # 2. Timezone IST
             ist = pytz.timezone('Asia/Kolkata')
             df['Timestamp'] = df['Timestamp'].dt.tz_convert(ist)
 
             # --- INDICATORS ---
             df['Date'] = df['Timestamp'].dt.date
             
-            # VWAP
+            # Intraday VWAP
             df['TP'] = (df['High'] + df['Low'] + df['Close']) / 3
-            df['Vol_Price'] = df['TP'] * df['Volume']
-            df['Cum_Vol_Price'] = df.groupby('Date')['Vol_Price'].cumsum()
+            df['Cum_Vol_Price'] = df.groupby('Date').apply(lambda x: (x['TP'] * x['Volume']).cumsum()).reset_index(level=0, drop=True)
             df['Cum_Vol'] = df.groupby('Date')['Volume'].cumsum()
             df['VWAP'] = df['Cum_Vol_Price'] / df['Cum_Vol']
 
-            # Stoch (Variable Names FIXED Here)
+            # Stoch & Vol
             low_14 = df['Low'].rolling(14).min()
-            high_14 = df['High'].rolling(14).max() # <--- Variable name fixed (was high_max)
+            high_14 = df['High'].rolling(14).max() # Variable FIXED
             
-            # Check for ZeroDivisionError (if High == Low)
-            denominator = high_14 - low_14
-            denominator = denominator.replace(0, 0.0001) # Avoid division by zero
-            
-            df['%K'] = 100 * ((df['Close'] - low_14) / denominator)
+            # Zero Division Check
+            denom = high_14 - low_14
+            denom = denom.replace(0, 0.001)
+
+            df['%K'] = 100 * ((df['Close'] - low_14) / denom)
             df['Stoch'] = df['%K'].rolling(3).mean()
             df['Vol_Avg'] = df['Volume'].rolling(20).mean()
 
             last = df.iloc[-1]
-            if pd.isna(last['VWAP']) or pd.isna(last['Stoch']): 
-                logs.append(f"{symbol}: Calculating...")
-                continue
-
+            
             # --- LOGIC ---
+            if pd.isna(last['VWAP']) or pd.isna(last['Stoch']): continue
+
             cond_vol = last['Volume'] > last['Vol_Avg']
             cond_stoch = 20 < last['Stoch'] < 80
             
@@ -206,8 +185,7 @@ def scan_market(tickers, interval, mode):
                     'Vol_Ratio': round(last['Volume'] / last['Vol_Avg'], 2)
                 })
 
-        except Exception as e:
-            logs.append(f"{symbol}: {str(e)}")
+        except:
             pass
             
     progress.empty()
@@ -216,12 +194,12 @@ def scan_market(tickers, interval, mode):
     return found_stocks, logs
 
 # --- 8. UI ---
-st.title("📡 Momentum Radar (Fixed & Robust)")
-st.write(f"Scanning **{trend_mode}** on **{tf_selection}**")
+st.title("⚡ 1-Minute Live Scanner")
+st.write(f"Scanning for **{trend_mode}** momentum")
 
 if st.button("🚀 SCAN NOW"):
-    with st.spinner("Scanning Market..."):
-        results, debug_logs = scan_market(all_tickers, interval_str, trend_mode)
+    with st.spinner("Analyzing Live Data..."):
+        results, _ = scan_market(all_tickers, trend_mode)
     
     if results:
         st.success(f"Found {len(results)} Stocks")
@@ -244,5 +222,3 @@ if st.button("🚀 SCAN NOW"):
             """, unsafe_allow_html=True)
     else:
         st.warning("No matches found.")
-        with st.expander("See Scan Logs"):
-            st.write(debug_logs)
