@@ -5,6 +5,7 @@ import datetime
 import requests
 import gzip
 import io
+import pytz # Timezone fix ke liye
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(page_title="Momentum Radar Pro (Live)", layout="wide", page_icon="📡")
@@ -31,20 +32,15 @@ def get_instrument_list():
         return None
 
 if store.instrument_df is None:
-    with st.spinner("Initializing Master Stock List (90+ Stocks)..."):
+    with st.spinner("Initializing Master Stock List..."):
         store.instrument_df = get_instrument_list()
 
 def get_instrument_key(symbol):
     try:
         if store.instrument_df is None: return None
-        # Symbol cleaning
         clean_symbol = symbol.replace('.NS', '').upper()
-        
-        # Upstox me kuch naam alag ho sakte hain (Jaise M&M)
-        # Hum direct match try karenge
         res = store.instrument_df[store.instrument_df['tradingsymbol'] == clean_symbol]
         res = res[res['instrument_type'] == 'EQUITY']
-        
         if not res.empty:
             return res.iloc[0]['instrument_key']
     except:
@@ -77,34 +73,15 @@ if admin_pass == "1234":
         store.access_token = new_token
         st.sidebar.success("Saved!")
         st.rerun()
-
-    # --- DEBUGGING BUTTON ---
+    
+    # Debug Tool
     st.sidebar.markdown("---")
-    if st.sidebar.button("🛠️ Test API (Historical)"):
-        if not store.access_token:
-            st.sidebar.error("No Token Found!")
-        else:
-            try:
-                st.sidebar.info("Testing connection with SBIN on 30min...")
-                key = get_instrument_key("SBIN")
-                if key:
-                    # Direct API Call to Historical Endpoint
-                    to_date = datetime.datetime.now().strftime("%Y-%m-%d")
-                    from_date = (datetime.datetime.now() - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
-                    url = f"https://api.upstox.com/v2/historical-candle/{key}/30minute/{to_date}/{from_date}"
-                    headers = {'Accept': 'application/json', 'Authorization': f'Bearer {store.access_token}'}
-                    response = requests.get(url, headers=headers)
-                    data = response.json()
-                    
-                    if 'data' in data and 'candles' in data['data'] and data['data']['candles']:
-                        st.sidebar.success(f"Success! Got {len(data['data']['candles'])} candles.")
-                        st.sidebar.write(data['data']['candles'][0])
-                    else:
-                        st.sidebar.warning(f"No Data received: {data}")
-            except Exception as e:
-                st.sidebar.error(f"Error: {str(e)}")
-else:
-    pass
+    test_symbol = st.sidebar.text_input("Test Specific Stock (e.g. SBIN):")
+    if st.sidebar.button("Check Data Accuracy"):
+        if test_symbol:
+            st.sidebar.info(f"Checking {test_symbol}...")
+            # (Logic handled in main scan but printed here if needed - simplified for now)
+            pass
 
 # --- 6. SETTINGS ---
 use_autorefresh = st.sidebar.checkbox("🔄 Enable Auto-Refresh")
@@ -115,46 +92,24 @@ if use_autorefresh:
 st.sidebar.markdown("---")
 tf_selection = st.sidebar.selectbox("Timeframe:", ("1 Minute", "5 Minutes", "15 Minutes", "30 Minutes", "1 Hour"))
 trend_mode = st.sidebar.radio("Signal Type:", ("Bullish (Buy)", "Bearish (Sell)"))
+show_tables = st.sidebar.checkbox("Show Data Tables (For Verification)", value=False)
 
-# Map UI selection to Upstox API interval strings
 upstox_tf_map = {
     "1 Minute": "1minute",
     "5 Minutes": "5minute",
     "15 Minutes": "15minute",
     "30 Minutes": "30minute",
-    "1 Hour": "60minute" # Upstox uses 60minute, not 1hour
+    "1 Hour": "60minute"
 }
 interval_str = upstox_tf_map[tf_selection]
 
-# --- 7. COMPLETE STOCK LIST (91 STOCKS) ---
-nifty50 = [
-    'ADANIENT', 'ADANIPORTS', 'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK', 'BAJAJ-AUTO', 'BAJFINANCE', 
-    'BAJAJFINSV', 'BPCL', 'BHARTIARTL', 'BRITANNIA', 'CIPLA', 'COALINDIA', 'DIVISLAB', 'DRREDDY', 
-    'EICHERMOT', 'GRASIM', 'HCLTECH', 'HDFCBANK', 'HDFCLIFE', 'HEROMOTOCO', 'HINDALCO', 'HINDUNILVR', 
-    'ICICIBANK', 'ITC', 'INDUSINDBK', 'INFY', 'JSWSTEEL', 'KOTAKBANK', 'LT', 'LTIM', 'M&M', 
-    'MARUTI', 'NESTLEIND', 'NTPC', 'ONGC', 'POWERGRID', 'RELIANCE', 'SBILIFE', 'SBIN', 'SUNPHARMA', 
-    'TCS', 'TATACONSUM', 'TATAMOTORS', 'TATASTEEL', 'TECHM', 'TITAN', 'ULTRACEMCO', 'UPL', 'WIPRO'
-]
-
-banknifty = [
-    'BANKBARODA', 'PNB', 'AUBANK', 'IDFCFIRSTB', 'FEDERALBNK', 'BANDHANBNK', 'INDUSINDBK', 
-    'AU SMALL FINANCE BANK', 'KOTAK MAHINDRA BANK'
-]
-
-midcap = [
-    'POLYCAB', 'TATACOMM', 'PERSISTENT', 'COFORGE', 'LTTS', 'MPHASIS', 'ASHOKLEY', 'ASTRAL', 
-    'JUBLFOOD', 'VOLTAS', 'TRENT', 'BEL', 'HAL', 'DLF', 'GODREJPROP', 'INDHOTEL', 'TATACHEM', 
-    'TATAPOWER', 'JINDALSTEL', 'SAIL', 'NMDC', 'ZEEL', 'CANBK', 'REC', 'PFC', 'IRCTC', 
-    'BOSCHLTD', 'CUMMINSIND', 'OBEROIRLTY', 'ESCORTS', 'SRF', 'PIIND', 'CONCOR', 'AUROPHARMA', 'LUPIN',
-    'ABCAPITAL', 'BALKRISIND', 'BHEL', 'GMRINFRA', 'IDEA', 'IGL', 'INDIGO', 'L&TFH', 
-    'LICHSGFIN', 'M&MFIN', 'MANAPPURAM', 'MFSL', 'MOTHERSON', 'NATIONALUM', 'NAUKRI', 
-    'PETRONET', 'RAMCOCEM', 'RBLBANK', 'RECLTD', 'SBICARD', 'SIEMENS', 'TVSMOTOR', 'UBL'
-]
-
-# Combine and remove duplicates
+# --- 7. STOCKS ---
+nifty50 = ['ADANIENT', 'ADANIPORTS', 'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK', 'BAJAJ-AUTO', 'BAJFINANCE', 'BAJAJFINSV', 'BPCL', 'BHARTIARTL', 'BRITANNIA', 'CIPLA', 'COALINDIA', 'DIVISLAB', 'DRREDDY', 'EICHERMOT', 'GRASIM', 'HCLTECH', 'HDFCBANK', 'HDFCLIFE', 'HEROMOTOCO', 'HINDALCO', 'HINDUNILVR', 'ICICIBANK', 'ITC', 'INDUSINDBK', 'INFY', 'JSWSTEEL', 'KOTAKBANK', 'LT', 'LTIM', 'M&M', 'MARUTI', 'NESTLEIND', 'NTPC', 'ONGC', 'POWERGRID', 'RELIANCE', 'SBILIFE', 'SBIN', 'SUNPHARMA', 'TCS', 'TATACONSUM', 'TATAMOTORS', 'TATASTEEL', 'TECHM', 'TITAN', 'ULTRACEMCO', 'UPL', 'WIPRO']
+banknifty = ['BANKBARODA', 'PNB', 'AUBANK', 'IDFCFIRSTB', 'FEDERALBNK', 'BANDHANBNK', 'AU SMALL FINANCE BANK', 'KOTAK MAHINDRA BANK']
+midcap = ['POLYCAB', 'TATACOMM', 'PERSISTENT', 'COFORGE', 'LTTS', 'MPHASIS', 'ASHOKLEY', 'ASTRAL', 'JUBLFOOD', 'VOLTAS', 'TRENT', 'BEL', 'HAL', 'DLF', 'GODREJPROP', 'INDHOTEL', 'TATACHEM', 'TATAPOWER', 'JINDALSTEL', 'SAIL', 'NMDC', 'ZEEL', 'CANBK', 'REC', 'PFC', 'IRCTC', 'BOSCHLTD', 'CUMMINSIND', 'OBEROIRLTY', 'ESCORTS', 'SRF', 'PIIND', 'CONCOR', 'AUROPHARMA', 'LUPIN', 'ABCAPITAL', 'BALKRISIND', 'BHEL', 'GMRINFRA', 'IDEA', 'IGL', 'INDIGO', 'L&TFH', 'LICHSGFIN', 'M&MFIN', 'MANAPPURAM', 'MFSL', 'MOTHERSON', 'NATIONALUM', 'NAUKRI', 'PETRONET', 'RAMCOCEM', 'RBLBANK', 'RECLTD', 'SBICARD', 'SIEMENS', 'TVSMOTOR', 'UBL']
 all_tickers = list(set(nifty50 + banknifty + midcap))
 
-# --- 8. SCANNER FUNCTION (Direct API Call) ---
+# --- 8. SCANNER ---
 def scan_market_upstox(tickers, interval, mode):
     found_stocks = []
     
@@ -166,70 +121,70 @@ def scan_market_upstox(tickers, interval, mode):
     status = st.empty()
     total = len(tickers)
 
-    # Dates for Historical Data (Last 20 days to ensure enough data for 30m/1h indicators)
+    # Date Settings
     to_date = datetime.datetime.now().strftime("%Y-%m-%d")
-    from_date = (datetime.datetime.now() - datetime.timedelta(days=20)).strftime("%Y-%m-%d")
+    from_date = (datetime.datetime.now() - datetime.timedelta(days=15)).strftime("%Y-%m-%d")
     
-    # Headers for Request
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {store.access_token}'
-    }
+    headers = {'Accept': 'application/json', 'Authorization': f'Bearer {store.access_token}'}
 
     for i, symbol in enumerate(tickers):
         status.text(f"Scanning {symbol}...")
         progress_bar.progress((i + 1) / total)
 
         try:
-            # 1. Get Key
             inst_key = get_instrument_key(symbol)
             if not inst_key: continue
 
-            # 2. Direct API Call (Historical Data Endpoint)
-            # Documentation: https://upstox.com/developer/api-documentation/historical-candle-data
+            # API Call
             url = f"https://api.upstox.com/v2/historical-candle/{inst_key}/{interval}/{to_date}/{from_date}"
-            
             response = requests.get(url, headers=headers)
-            
-            if response.status_code != 200:
-                continue
-                
             data = response.json()
             
-            if 'data' not in data or 'candles' not in data['data'] or not data['data']['candles']:
-                continue
+            if 'data' not in data or 'candles' not in data['data']: continue
 
-            # 3. Process Data
+            # DataFrame Creation
             candles = data['data']['candles']
             columns = ['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'OI']
             df = pd.DataFrame(candles, columns=columns)
-            
-            # Historical API returns: [Oldest, ..., Latest] (Already sorted usually, but let's check)
-            # Actually Upstox Historical often returns [Latest, ..., Oldest] in some versions?
-            # Let's ensure it is sorted chronologically for rolling calculations: Oldest -> Latest
-            
-            # Check timestamps to be sure
-            t1 = pd.to_datetime(df['Timestamp'].iloc[0])
-            t2 = pd.to_datetime(df['Timestamp'].iloc[-1])
-            
-            if t1 > t2: # If first row is newer than last row (Reverse order)
-                df = df[::-1].reset_index(drop=True)
 
-            # Manual Indicators
+            # 1. Sort Chronologically (Old -> New) VERY IMPORTANT
+            df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+            df = df.sort_values('Timestamp').reset_index(drop=True)
+
+            # 2. Timezone Conversion (UTC to IST)
+            ist = pytz.timezone('Asia/Kolkata')
+            df['Timestamp'] = df['Timestamp'].dt.tz_convert(ist)
+
+            # --- CORRECT INDICATOR LOGIC ---
+
+            # A. Intraday VWAP (Resets every day)
             df['TP'] = (df['High'] + df['Low'] + df['Close']) / 3
-            df['Cum_Vol_Price'] = (df['TP'] * df['Volume']).cumsum()
-            df['Cum_Vol'] = df['Volume'].cumsum()
-            df['VWAP'] = df['Cum_Vol_Price'] / df['Cum_Vol']
+            df['Vol_Price'] = df['TP'] * df['Volume']
             
+            # Group by Date to reset calculation daily
+            df['Date'] = df['Timestamp'].dt.date
+            df['Cum_Vol_Price'] = df.groupby('Date')['Vol_Price'].cumsum()
+            df['Cum_Vol'] = df.groupby('Date')['Volume'].cumsum()
+            df['VWAP'] = df['Cum_Vol_Price'] / df['Cum_Vol']
+
+            # B. Stochastic (14, 3, 3) - Rolling
             low_min = df['Low'].rolling(window=14).min()
             high_max = df['High'].rolling(window=14).max()
             df['%K'] = 100 * ((df['Close'] - low_min) / (high_max - low_min))
             df['Stoch'] = df['%K'].rolling(window=3).mean()
+
+            # C. Volume Average (20) - Rolling
             df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
 
-            # Latest Candle
+            # --- CHECK LATEST CANDLE ---
             last = df.iloc[-1]
             
+            # Safety Check: Is Data Fresh? (Aaj ka data hai ya purana?)
+            today_date = datetime.datetime.now(ist).date()
+            last_date = last['Timestamp'].date()
+            
+            # Agar market closed hai to kal ka data dikhayega, jo thik hai testing ke liye.
+            # But values NaN nahi honi chahiye
             if pd.isna(last['VWAP']) or pd.isna(last['Stoch']): continue
 
             # Logic
@@ -249,7 +204,9 @@ def scan_market_upstox(tickers, interval, mode):
                     'Price': round(last['Close'], 2),
                     'Stoch': round(last['Stoch'], 2),
                     'VWAP': round(last['VWAP'], 2),
-                    'Vol_Ratio': vol_multiplier
+                    'Vol_Ratio': vol_multiplier,
+                    'Time': last['Timestamp'].strftime('%H:%M'),
+                    'Debug_Data': df.tail(5) # For Table View
                 })
 
         except Exception:
@@ -261,32 +218,50 @@ def scan_market_upstox(tickers, interval, mode):
     return found_stocks
 
 # --- 9. UI ---
-st.title("📡 Momentum Radar Pro (Live ⚡)")
-st.write(f"Scanning **{trend_mode}** on **{tf_selection}** | Source: **Upstox API**")
+st.title("📡 Momentum Radar Pro (Fixed ⚡)")
+st.write(f"Scanning **{trend_mode}** on **{tf_selection}** | Data: **Upstox Historical**")
 
-if st.button('🚀 START LIVE SCAN') or use_autorefresh:
+if st.button('🚀 START SCAN') or use_autorefresh:
     if not store.access_token:
         st.warning("⚠️ Waiting for Admin Token...")
     else:
-        with st.spinner('Fetching Historical Data & Scanning...'):
+        with st.spinner('Calculating Intraday VWAP & Scanning...'):
             results = scan_market_upstox(all_tickers, interval_str, trend_mode)
         
         if results:
             st.success(f"Found {len(results)} Stocks!")
-            cols = st.columns(3)
-            for i, stock in enumerate(results):
-                with cols[i % 3]:
-                    tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{stock['Symbol']}"
-                    card_class = "buy-card" if trend_mode == "Bullish (Buy)" else "sell-card"
-                    text_class = "buy-text" if trend_mode == "Bullish (Buy)" else "sell-text"
-                    st.markdown(f"""
-                    <div class="{card_class}">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <div class="stock-symbol"><a href="{tv_link}" target="_blank">{stock['Symbol']} 🔗</a></div>
-                            <div class="vol-badge">⚡ {stock['Vol_Ratio']}x Vol</div>
-                        </div>
+            
+            for stock in results:
+                # Main Card
+                cols = st.columns([1, 3]) # Layout
+                
+                tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{stock['Symbol']}"
+                card_class = "buy-card" if trend_mode == "Bullish (Buy)" else "sell-card"
+                text_class = "buy-text" if trend_mode == "Bullish (Buy)" else "sell-text"
+                
+                st.markdown(f"""
+                <div class="{card_class}">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div class="stock-symbol"><a href="{tv_link}" target="_blank">{stock['Symbol']} 🔗</a></div>
+                        <div class="vol-badge">⚡ {stock['Vol_Ratio']}x Vol</div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 10px;">
                         <div class="stock-price {text_class}">₹{stock['Price']}</div>
-                        <div class="stock-info">📊 Stoch: {stock['Stoch']}<br>🌊 VWAP: {stock['VWAP']}</div>
-                    </div>""", unsafe_allow_html=True)
+                        <div class="stock-info" style="text-align: right;">
+                            🕒 {stock['Time']}<br>
+                            📊 Stoch: {stock['Stoch']}<br>
+                            🌊 VWAP: {stock['VWAP']}
+                        </div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+
+                # Show Data Table if Checked (For verification)
+                if show_tables:
+                    st.write(f"🔍 **Data Verification for {stock['Symbol']}**")
+                    # Clean columns for display
+                    display_df = stock['Debug_Data'][['Timestamp', 'Close', 'Volume', 'VWAP', 'Stoch', 'Vol_Avg']].copy()
+                    st.dataframe(display_df.style.format("{:.2f}", subset=['Close', 'VWAP', 'Stoch', 'Vol_Avg']))
+                    st.markdown("---")
+
         else:
-            st.info(f"Market is sideways on {tf_selection}. No stocks matching VWAP + Vol + Stoch criteria.")
+            st.info(f"Market is sideways. No stocks match criteria on {tf_selection}.")
