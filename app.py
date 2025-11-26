@@ -5,9 +5,10 @@ import requests
 import gzip
 import io
 import pytz
+from datetime import datetime
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(page_title="Pro Live Scanner (1-Min)", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Auto Live Scanner (1-Min)", layout="wide", page_icon="⚡")
 
 # --- 2. GLOBAL STORE ---
 @st.cache_resource
@@ -31,7 +32,7 @@ def get_instrument_list():
         return None
 
 if store.instrument_df is None:
-    with st.spinner("Downloading 91 Stocks List..."):
+    with st.spinner("Downloading Stock List..."):
         store.instrument_df = get_instrument_list()
 
 def get_instrument_key(symbol):
@@ -53,7 +54,7 @@ st.markdown("""
     .sell-card { background-color: #1e1e1e; border: 1px solid #333; border-radius: 10px; padding: 15px; margin-bottom: 15px; border-left: 5px solid #ff4b4b; }
     .stock-price { font-size: 26px; font-weight: bold; color: #fff; }
     .time-badge { font-size: 12px; color: #aaa; background: #333; padding: 2px 5px; border-radius: 4px; }
-    .stButton>button { width: 100%; background-color: #262730; color: white; border: 1px solid #4c4c4c; }
+    .header-status { font-size: 14px; color: #00ff41; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -67,10 +68,11 @@ if admin_pass == "1234":
         store.access_token = new_token
         st.rerun()
 
-# --- 6. SETTINGS ---
-# AUTO REFRESH SET TO 60 SECONDS
+# --- 6. AUTO REFRESH (60 Seconds) ---
+# Yah line har 60 second me code ko wapis run karegi
 st_autorefresh(interval=60000, key="market_scanner")
 
+# Settings
 trend_mode = st.sidebar.radio("Signal Mode:", ("Bullish (Buy)", "Bearish (Sell)"))
 
 # --- 7. STOCK LIST (91 Stocks) ---
@@ -79,26 +81,29 @@ all_tickers = ['ADANIENT', 'ADANIPORTS', 'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK',
 # --- 8. SCANNER LOGIC ---
 def scan_market(tickers, mode):
     matches = []
-    all_data = [] # To store data of ALL stocks for verification
+    all_data = [] 
     
     if not store.access_token:
-        st.error("⚠️ Admin Token Required in Sidebar")
         return [], []
 
+    # Progress Bar (Top of screen)
     progress = st.progress(0)
-    status = st.empty()
+    status_text = st.empty()
+    
     headers = {'Accept': 'application/json', 'Api-Version': '2.0', 'Authorization': f'Bearer {store.access_token}'}
     total = len(tickers)
 
     for i, symbol in enumerate(tickers):
-        status.text(f"Scanning {symbol} ({i+1}/{total})...")
+        # Update text only every 5 stocks to speed up UI
+        if i % 5 == 0:
+            status_text.text(f"Scanning Live: {symbol}...")
         progress.progress((i+1)/total)
 
         try:
             key = get_instrument_key(symbol)
             if not key: continue
 
-            # Intraday API (No Date Issues)
+            # Intraday API (Latest Data)
             url = f"https://api.upstox.com/v2/historical-candle/intraday/{key}/1minute"
             response = requests.get(url, headers=headers)
             
@@ -178,46 +183,56 @@ def scan_market(tickers, mode):
             pass
             
     progress.empty()
-    status.empty()
+    status_text.empty()
     matches.sort(key=lambda x: x['Vol_Ratio'], reverse=True)
     return matches, all_data
 
-# --- 9. UI ---
-st.title("⚡ Pro 1-Min Scanner (All 91 Stocks)")
-st.write(f"Mode: **{trend_mode}** | Auto-Refresh: **60s**")
+# --- 9. UI DISPLAY ---
+current_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%H:%M:%S")
 
-if st.button("🚀 SCAN NOW"):
-    with st.spinner("Analyzing Live Data..."):
-        results, full_data = scan_market(all_tickers, trend_mode)
+st.title(f"⚡ Pro 1-Min Scanner (Auto)")
+st.markdown(f"**Status:** <span class='header-status'>🟢 Live | Last Update: {current_time}</span>", unsafe_allow_html=True)
+st.write(f"Scanning **{len(all_tickers)}** Stocks for **{trend_mode}** Setup")
+
+# LOGIC: AGAR TOKEN HAI TO AUTOMATIC CHALEGA
+if store.access_token:
+    # Button hata diya, direct function call
+    results, full_data = scan_market(all_tickers, trend_mode)
     
     # 1. SHOW MATCHES
     if results:
         st.success(f"🔥 Found {len(results)} Perfect Matches")
-        for stock in results:
-            css = "buy-card" if trend_mode == "Bullish (Buy)" else "sell-card"
-            tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{stock['Symbol']}"
-            st.markdown(f"""
-            <div class="{css}">
-                <div style="display:flex; justify-content:space-between;">
-                    <span style="font-size:22px; font-weight:bold; color:white;">
-                        <a href="{tv_link}" target="_blank" style="color:white;text-decoration:none;">{stock['Symbol']} 🔗</a>
-                    </span>
-                    <span class="time-badge">🕒 {stock['Time']}</span>
+        
+        # Grid Layout for Cards
+        cols = st.columns(3)
+        for i, stock in enumerate(results):
+            with cols[i % 3]:
+                css = "buy-card" if trend_mode == "Bullish (Buy)" else "sell-card"
+                tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{stock['Symbol']}"
+                st.markdown(f"""
+                <div class="{css}">
+                    <div style="display:flex; justify-content:space-between;">
+                        <span style="font-size:22px; font-weight:bold; color:white;">
+                            <a href="{tv_link}" target="_blank" style="color:white;text-decoration:none;">{stock['Symbol']} 🔗</a>
+                        </span>
+                        <span class="time-badge">🕒 {stock['Time']}</span>
+                    </div>
+                    <div class="stock-price">₹{stock['Price']}</div>
+                    <div style="color:#ccc; font-size:14px;">
+                        VWAP: {stock['VWAP']} | Stoch: {stock['Stoch']} | Vol: {stock['Vol_Ratio']}x
+                    </div>
                 </div>
-                <div class="stock-price">₹{stock['Price']}</div>
-                <div style="color:#ccc; font-size:14px;">
-                    VWAP: {stock['VWAP']} | Stoch: {stock['Stoch']} | Vol: {stock['Vol_Ratio']}x
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
     else:
-        st.warning("No Perfect Matches Found right now.")
+        st.info("Scanning Complete: No Perfect Matches Found at this moment.")
 
-    # 2. SHOW ALL DATA (USER REQUIREMENT)
+    # 2. SHOW ALL DATA
     st.markdown("---")
-    st.subheader("📋 All 91 Stocks Status")
+    st.subheader("📋 Live Market Status (All 91 Stocks)")
     if full_data:
         df_all = pd.DataFrame(full_data)
-        # Reorder columns
         df_all = df_all[['Symbol', 'Price', 'Status', 'VWAP', 'Stoch', 'Vol_Ratio', 'Time']]
-        st.dataframe(df_all, use_container_width=True)
+        st.dataframe(df_all, use_container_width=True, hide_index=True)
+
+else:
+    st.warning("⚠️ System Paused. Please enter Upstox Token in Admin Panel (Sidebar).")
