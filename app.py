@@ -1,16 +1,15 @@
 import streamlit as st
 import yfinance as yf
-import pandas_ta as ta
 import pandas as pd
 from streamlit_autorefresh import st_autorefresh
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(page_title="Momentum Radar Pro", layout="wide", page_icon="📡")
 
-# --- 2. CSS FOR PRO UI (Buy & Sell Colors) ---
+# --- 2. CSS FOR PRO UI ---
 st.markdown("""
 <style>
-    /* Buy Card Style (Green) */
+    /* Buy Card (Green) */
     .buy-card {
         background-color: #1e1e1e;
         border: 1px solid #333;
@@ -23,7 +22,7 @@ st.markdown("""
     }
     .buy-card:hover { transform: scale(1.02); border-color: #00ff41; }
     
-    /* Sell Card Style (Red) */
+    /* Sell Card (Red) */
     .sell-card {
         background-color: #1e1e1e;
         border: 1px solid #333;
@@ -36,7 +35,7 @@ st.markdown("""
     }
     .sell-card:hover { transform: scale(1.02); border-color: #ff4b4b; }
 
-    /* Common Styles */
+    /* Links & Text */
     .stock-symbol a {
         font-size: 22px;
         font-weight: bold;
@@ -60,7 +59,7 @@ st.markdown("""
     }
     .stock-info { font-size: 14px; color: #cccccc; margin-top: 8px; }
     
-    /* Button Style */
+    /* Button */
     .stButton>button {
         width: 100%;
         background-color: #262730;
@@ -71,30 +70,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. SIDEBAR CONTROLS ---
+# --- 3. SIDEBAR SETTINGS ---
 st.sidebar.title("📡 Settings")
 
-# A. Auto Refresh (Feature C)
+# Auto Refresh
 use_autorefresh = st.sidebar.checkbox("🔄 Enable Auto-Refresh")
 if use_autorefresh:
-    refresh_rate = st.sidebar.slider("Refresh Interval (Seconds)", 60, 300, 60)
+    refresh_rate = st.sidebar.slider("Refresh Interval (s)", 60, 300, 60)
     count = st_autorefresh(interval=refresh_rate * 1000, key="market_scanner")
-    st.sidebar.write(f"Auto-refreshing every {refresh_rate}s...")
 
-# B. Timeframe Selection
 st.sidebar.markdown("---")
 st.sidebar.subheader("⏳ Timeframe")
 tf_selection = st.sidebar.selectbox("Select Chart Time:", ("5 Minutes", "15 Minutes", "30 Minutes", "1 Hour"))
 
-# C. Trend Selection (Feature: Buy/Sell Mode)
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 Signal Type")
 trend_mode = st.sidebar.radio("Find Stocks for:", ("Bullish (Buy)", "Bearish (Sell)"))
 
 st.sidebar.markdown("---")
-st.sidebar.info("Click on Stock Name to open TradingView Chart.")
+st.sidebar.info("Tip: Click stock name for Chart.")
 
-# Mapping
+# Timeframe Logic
 timeframe_map = {"5 Minutes": "5m", "15 Minutes": "15m", "30 Minutes": "30m", "1 Hour": "1h"}
 tf_code = timeframe_map[tf_selection]
 period_map = "5d" if tf_code in ["5m", "15m", "30m"] else "1mo"
@@ -116,50 +112,55 @@ banknifty = ['BANKBARODA.NS', 'PNB.NS', 'AUBANK.NS', 'IDFCFIRSTB.NS', 'FEDERALBN
 midcap = ['POLYCAB.NS', 'TATACOMM.NS', 'PERSISTENT.NS', 'COFORGE.NS', 'LTTS.NS', 'MPHASIS.NS', 'ASHOKLEY.NS', 'ASTRAL.NS', 'JUBLFOOD.NS', 'VOLTAS.NS', 'TRENT.NS', 'BEL.NS', 'HAL.NS', 'DLF.NS', 'GODREJPROP.NS', 'INDHOTEL.NS', 'TATACHEM.NS', 'TATAPOWER.NS', 'JINDALSTEL.NS', 'SAIL.NS', 'NMDC.NS', 'ZEEL.NS', 'CANBK.NS', 'REC.NS', 'PFC.NS', 'IRCTC.NS', 'BOSCHLTD.NS', 'CUMMINSIND.NS', 'OBEROIRLTY.NS', 'ESCORTS.NS', 'SRF.NS', 'PIIND.NS', 'CONCOR.NS', 'AUROPHARMA.NS', 'LUPIN.NS']
 all_tickers = list(set(nifty50 + banknifty + midcap))
 
-# --- 5. SCANNING FUNCTION ---
+# --- 5. SCANNING FUNCTION (LIGHTWEIGHT) ---
+@st.cache_data(ttl=60, show_spinner=False)
 def scan_market(tickers, timeframe_code, period_duration, mode):
     found_stocks = []
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    total = len(tickers)
     
-    for i, symbol in enumerate(tickers):
-        status_text.text(f"Scanning {symbol} ({i+1}/{total})...")
-        progress_bar.progress((i + 1) / total)
-        
+    for symbol in tickers:
         try:
             df = yf.download(symbol, period=period_duration, interval=timeframe_code, progress=False, auto_adjust=True)
             if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             if df.empty: continue
 
-            # Indicators
-            df.ta.vwap(append=True)
-            df.ta.stoch(k=14, d=3, smooth_k=3, append=True)
+            # --- MANUAL CALCULATIONS (Replacing Pandas_TA) ---
+            
+            # 1. VWAP Calculation
+            # Formula: Cumulative(Price * Volume) / Cumulative(Volume)
+            df['TP'] = (df['High'] + df['Low'] + df['Close']) / 3
+            df['Cum_Vol_Price'] = (df['TP'] * df['Volume']).cumsum()
+            df['Cum_Vol'] = df['Volume'].cumsum()
+            df['VWAP'] = df['Cum_Vol_Price'] / df['Cum_Vol']
+            
+            # 2. Stochastic Calculation (14, 3, 3)
+            # Formula: %K = (Current Close - Lowest Low) / (Highest High - Lowest Low) * 100
+            low_min = df['Low'].rolling(window=14).min()
+            high_max = df['High'].rolling(window=14).max()
+            df['%K'] = 100 * ((df['Close'] - low_min) / (high_max - low_min))
+            df['Stoch'] = df['%K'].rolling(window=3).mean() # Smoothing (Default=3)
+
+            # 3. Average Volume
             df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
 
+            # --- LOGIC ---
             last = df.iloc[-1]
-            close, vol, vol_avg = last['Close'], last['Volume'], last['Vol_Avg']
-            
-            # Dynamic Columns
-            vwap_c = [c for c in df.columns if 'VWAP' in str(c)]
-            stoch_c = [c for c in df.columns if 'STOCHk' in str(c)]
-            if not vwap_c or not stoch_c: continue
-            vwap_val, stoch_val = last[vwap_c[0]], last[stoch_c[0]]
+            close = last['Close']
+            vol = last['Volume']
+            vol_avg = last['Vol_Avg']
+            vwap_val = last['VWAP']
+            stoch_val = last['Stoch']
 
-            # --- MAIN LOGIC ---
-            cond_vol = vol > vol_avg      # Volume hamesha high hona chahiye
-            cond_stoch = 20 < stoch_val < 80 # Stoch range me hona chahiye
+            # Check if Data is Valid (NaN check)
+            if pd.isna(vwap_val) or pd.isna(stoch_val): continue
+
+            cond_vol = vol > vol_avg
+            cond_stoch = 20 < stoch_val < 80
             
             is_match = False
-            
             if mode == "Bullish (Buy)":
-                # Price VWAP ke upar
-                if close > vwap_val and cond_vol and cond_stoch:
-                    is_match = True
+                if close > vwap_val and cond_vol and cond_stoch: is_match = True
             else:
-                # Bearish (Sell) -> Price VWAP ke neeche
-                if close < vwap_val and cond_vol and cond_stoch:
-                    is_match = True
+                if close < vwap_val and cond_vol and cond_stoch: is_match = True
 
             if is_match:
                 vol_multiplier = round(vol / vol_avg, 2)
@@ -170,23 +171,18 @@ def scan_market(tickers, timeframe_code, period_duration, mode):
                     'VWAP': round(vwap_val, 2),
                     'Vol_Ratio': vol_multiplier
                 })
-
         except Exception:
             pass
     
-    progress_bar.empty()
-    status_text.empty()
-    # Sort by Volume (Highest first)
     found_stocks.sort(key=lambda x: x['Vol_Ratio'], reverse=True)
     return found_stocks
 
 # --- 6. MAIN UI ---
 st.title("📡 Momentum Radar Pro")
-st.write(f"Scanning **{trend_mode}** opportunities on **{tf_selection}** timeframe.")
+st.write(f"Scanning **{trend_mode}** opportunities on **{tf_selection}**.")
 
-# Start Scan
 if st.button('🚀 START SCAN') or use_autorefresh:
-    with st.spinner('Scanning Market...'):
+    with st.spinner('Analyzing Market Data...'):
         results = scan_market(all_tickers, tf_code, period_map, trend_mode)
     
     if results:
@@ -195,11 +191,9 @@ if st.button('🚀 START SCAN') or use_autorefresh:
         
         for i, stock in enumerate(results):
             with cols[i % 3]:
-                # Dynamic Link for TradingView (Feature B)
                 clean_symbol = stock['Symbol'].replace('.NS', '')
                 tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{clean_symbol}"
                 
-                # Card Logic (Green for Buy, Red for Sell)
                 card_class = "buy-card" if trend_mode == "Bullish (Buy)" else "sell-card"
                 text_class = "buy-text" if trend_mode == "Bullish (Buy)" else "sell-text"
 
@@ -219,4 +213,4 @@ if st.button('🚀 START SCAN') or use_autorefresh:
                 </div>
                 """, unsafe_allow_html=True)
     else:
-        st.warning("No stocks found right now. Market might be sideways.")
+        st.warning("No stocks found right now.")
