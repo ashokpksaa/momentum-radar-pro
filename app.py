@@ -32,7 +32,7 @@ def get_instrument_list():
         return None
 
 if store.instrument_df is None:
-    with st.spinner("Initializing Master Stock List..."):
+    with st.spinner("Loading Stock List..."):
         store.instrument_df = get_instrument_list()
 
 def get_instrument_key(symbol):
@@ -62,71 +62,59 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 5. ADMIN PANEL (DIAGNOSTICS ADDED) ---
-st.sidebar.title("⚙️ Control Panel")
-admin_pass = st.sidebar.text_input("Admin Login", type="password")
+# --- 5. ADMIN PANEL ---
+st.sidebar.title("⚙️ Admin")
+admin_pass = st.sidebar.text_input("Login", type="password")
 
 if admin_pass == "1234":
-    st.sidebar.success("Unlocked! 🔓")
     new_token = st.sidebar.text_area("Upstox Token:", value=store.access_token if store.access_token else "")
     if st.sidebar.button("Save Token 💾"):
         store.access_token = new_token
-        st.sidebar.success("Saved!")
         st.rerun()
 
+    # --- DIAGNOSTICS (VERY IMPORTANT FOR YOU) ---
     st.sidebar.markdown("---")
-    st.sidebar.write("🚑 **System Diagnostics**")
+    st.sidebar.write("🛠️ **Debugger**")
+    test_symbol = st.sidebar.text_input("Test Symbol (e.g. PIIND)", value="PIIND")
     
-    # --- POWERFUL TEST BUTTON ---
-    if st.sidebar.button("Run Full Diagnostics"):
-        if not store.access_token:
-            st.sidebar.error("❌ No Token Found!")
-        else:
-            st.sidebar.info("1. Checking Token & SBIN Data...")
-            
-            # Hardcoded Key for SBIN to bypass CSV errors
-            # NSE_EQ|INE006A01024 is SBIN
-            test_key = "NSE_EQ|INE002A01018" # RELIANCE Key
-            
-            # Dates
-            to_date = datetime.datetime.now().strftime("%Y-%m-%d")
-            from_date = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
-            
-            # URL & Headers (FIXED API VERSION)
-            url = f"https://api.upstox.com/v2/historical-candle/{test_key}/30minute/{to_date}/{from_date}"
-            headers = {
-                'Accept': 'application/json',
-                'Api-Version': '2.0',  # <--- CRITICAL FIX
-                'Authorization': f'Bearer {store.access_token}'
-            }
-            
-            try:
+    if st.sidebar.button("Check Last Candle"):
+        if store.access_token:
+            key = get_instrument_key(test_symbol)
+            if key:
+                # 1 Minute Data Check
+                to_date = datetime.datetime.now().strftime("%Y-%m-%d")
+                from_date = (datetime.datetime.now() - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
+                url = f"https://api.upstox.com/v2/historical-candle/{key}/1minute/{to_date}/{from_date}"
+                headers = {'Accept': 'application/json', 'Api-Version': '2.0', 'Authorization': f'Bearer {store.access_token}'}
                 res = requests.get(url, headers=headers)
-                st.sidebar.write(f"Status Code: {res.status_code}")
-                
-                if res.status_code == 200:
-                    data = res.json()
-                    if 'data' in data and 'candles' in data['data'] and data['data']['candles']:
-                        st.sidebar.success(f"✅ SUCCESS! Got {len(data['data']['candles'])} candles.")
-                        st.sidebar.write("Sample Data:", data['data']['candles'][0])
-                    else:
-                        st.sidebar.warning("⚠️ Connected, but returned EMPTY data.")
-                        st.sidebar.write("Full Response:", data)
-                else:
-                    st.sidebar.error(f"❌ API Error: {res.text}")
+                data = res.json()
+                if 'data' in data and 'candles' in data['data']:
+                    candles = data['data']['candles']
+                    df = pd.DataFrame(candles, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'OI'])
+                    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+                    df = df.sort_values('Timestamp').reset_index(drop=True)
                     
-            except Exception as e:
-                st.sidebar.error(f"❌ Connection Error: {str(e)}")
+                    # Convert to IST for Display
+                    ist = pytz.timezone('Asia/Kolkata')
+                    df['Timestamp'] = df['Timestamp'].dt.tz_convert(ist)
+                    
+                    last = df.iloc[-1]
+                    st.sidebar.success(f"Latest Data for {test_symbol}:")
+                    st.sidebar.write(f"Time: {last['Timestamp']}")
+                    st.sidebar.write(f"Close Price: {last['Close']}")
+                    st.sidebar.write("(If this price matches your broker, the code is FIXED)")
+                else:
+                    st.sidebar.error("No Data from API")
 
 # --- 6. SETTINGS ---
 use_autorefresh = st.sidebar.checkbox("🔄 Enable Auto-Refresh")
 if use_autorefresh:
-    refresh_rate = st.sidebar.slider("Refresh (s)", 30, 300, 60)
-    st_autorefresh(interval=refresh_rate * 1000, key="market_scanner")
+    st_autorefresh(interval=60000)
 
 st.sidebar.markdown("---")
 tf_selection = st.sidebar.selectbox("Timeframe:", ("1 Minute", "5 Minutes", "15 Minutes", "30 Minutes", "1 Hour"))
 trend_mode = st.sidebar.radio("Signal Type:", ("Bullish (Buy)", "Bearish (Sell)"))
+show_debug = st.sidebar.checkbox("Show Table Data (For Verification)", value=False)
 
 upstox_tf_map = {
     "1 Minute": "1minute", "5 Minutes": "5minute", "15 Minutes": "15minute", 
@@ -134,30 +122,31 @@ upstox_tf_map = {
 }
 interval_str = upstox_tf_map[tf_selection]
 
-# --- 7. STOCKS ---
-nifty50 = ['ADANIENT', 'ADANIPORTS', 'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK', 'BAJAJ-AUTO', 'BAJFINANCE', 'BAJAJFINSV', 'BPCL', 'BHARTIARTL', 'BRITANNIA', 'CIPLA', 'COALINDIA', 'DIVISLAB', 'DRREDDY', 'EICHERMOT', 'GRASIM', 'HCLTECH', 'HDFCBANK', 'HDFCLIFE', 'HEROMOTOCO', 'HINDALCO', 'HINDUNILVR', 'ICICIBANK', 'ITC', 'INDUSINDBK', 'INFY', 'JSWSTEEL', 'KOTAKBANK', 'LT', 'LTIM', 'M&M', 'MARUTI', 'NESTLEIND', 'NTPC', 'ONGC', 'POWERGRID', 'RELIANCE', 'SBILIFE', 'SBIN', 'SUNPHARMA', 'TCS', 'TATACONSUM', 'TATAMOTORS', 'TATASTEEL', 'TECHM', 'TITAN', 'ULTRACEMCO', 'UPL', 'WIPRO']
-banknifty = ['BANKBARODA', 'PNB', 'AUBANK', 'IDFCFIRSTB', 'FEDERALBNK', 'BANDHANBNK']
-midcap = ['POLYCAB', 'TATACOMM', 'PERSISTENT', 'COFORGE', 'LTTS', 'MPHASIS', 'ASHOKLEY', 'ASTRAL', 'JUBLFOOD', 'VOLTAS', 'TRENT', 'BEL', 'HAL', 'DLF', 'GODREJPROP', 'INDHOTEL', 'TATACHEM', 'TATAPOWER', 'JINDALSTEL', 'SAIL', 'NMDC', 'ZEEL', 'CANBK', 'REC', 'PFC', 'IRCTC', 'BOSCHLTD', 'CUMMINSIND', 'OBEROIRLTY', 'ESCORTS', 'SRF', 'PIIND', 'CONCOR', 'AUROPHARMA', 'LUPIN']
-all_tickers = list(set(nifty50 + banknifty + midcap))
+# --- 7. STOCKS (Full List) ---
+all_tickers = ['ADANIENT', 'ADANIPORTS', 'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK', 'BAJAJ-AUTO', 'BAJFINANCE', 'BAJAJFINSV', 'BPCL', 'BHARTIARTL', 'BRITANNIA', 'CIPLA', 'COALINDIA', 'DIVISLAB', 'DRREDDY', 'EICHERMOT', 'GRASIM', 'HCLTECH', 'HDFCBANK', 'HDFCLIFE', 'HEROMOTOCO', 'HINDALCO', 'HINDUNILVR', 'ICICIBANK', 'ITC', 'INDUSINDBK', 'INFY', 'JSWSTEEL', 'KOTAKBANK', 'LT', 'LTIM', 'M&M', 'MARUTI', 'NESTLEIND', 'NTPC', 'ONGC', 'POWERGRID', 'RELIANCE', 'SBILIFE', 'SBIN', 'SUNPHARMA', 'TCS', 'TATACONSUM', 'TATAMOTORS', 'TATASTEEL', 'TECHM', 'TITAN', 'ULTRACEMCO', 'UPL', 'WIPRO', 'BANKBARODA', 'PNB', 'AUBANK', 'IDFCFIRSTB', 'FEDERALBNK', 'BANDHANBNK', 'POLYCAB', 'TATACOMM', 'PERSISTENT', 'COFORGE', 'LTTS', 'MPHASIS', 'ASHOKLEY', 'ASTRAL', 'JUBLFOOD', 'VOLTAS', 'TRENT', 'BEL', 'HAL', 'DLF', 'GODREJPROP', 'INDHOTEL', 'TATACHEM', 'TATAPOWER', 'JINDALSTEL', 'SAIL', 'NMDC', 'ZEEL', 'CANBK', 'REC', 'PFC', 'IRCTC', 'BOSCHLTD', 'CUMMINSIND', 'OBEROIRLTY', 'ESCORTS', 'SRF', 'PIIND', 'CONCOR', 'AUROPHARMA', 'LUPIN']
 
 # --- 8. SCANNER ---
 def scan_market_upstox(tickers, interval, mode):
     found_stocks = []
     
     if not store.access_token:
-        st.error("⚠️ System Offline. Admin needs to set Token.")
+        st.error("⚠️ Token Missing! Please add token in Admin Panel.")
         return []
 
     progress_bar = st.progress(0)
     status = st.empty()
     total = len(tickers)
     
+    # --- DYNAMIC DATE RANGE (THE FIX) ---
+    # 1 Minute charts need small range to be fast. 5/15/30 needs more history for VWAP.
+    days_back = 5 if interval == "1minute" else 25 
+    
     to_date = datetime.datetime.now().strftime("%Y-%m-%d")
-    from_date = (datetime.datetime.now() - datetime.timedelta(days=15)).strftime("%Y-%m-%d")
+    from_date = (datetime.datetime.now() - datetime.timedelta(days=days_back)).strftime("%Y-%m-%d")
     
     headers = {
         'Accept': 'application/json',
-        'Api-Version': '2.0', # <--- FIXED HERE TOO
+        'Api-Version': '2.0',
         'Authorization': f'Bearer {store.access_token}'
     }
 
@@ -172,21 +161,25 @@ def scan_market_upstox(tickers, interval, mode):
             url = f"https://api.upstox.com/v2/historical-candle/{inst_key}/{interval}/{to_date}/{from_date}"
             response = requests.get(url, headers=headers)
             
-            if response.status_code != 200: continue
+            # Error Handling (To fix "Sideways" issue)
+            if response.status_code != 200:
+                # Uncomment print below to debug in logs if needed
+                # print(f"Error {symbol}: {response.text}") 
+                continue
+                
             data = response.json()
-            
             if 'data' not in data or 'candles' not in data['data']: continue
 
             candles = data['data']['candles']
-            # Upstox sends: [Timestamp, Open, High, Low, Close, Volume, OI]
             df = pd.DataFrame(candles, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'OI'])
             
-            # --- DATA CLEANING ---
+            # --- CRITICAL FIXES FOR PRICE & SORTING ---
             df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-            # Sort: Oldest First (for indicators)
+            
+            # 1. Force Sort Ascending (Oldest -> Newest)
             df = df.sort_values('Timestamp').reset_index(drop=True)
             
-            # IST Timezone
+            # 2. Timezone IST
             ist = pytz.timezone('Asia/Kolkata')
             df['Timestamp'] = df['Timestamp'].dt.tz_convert(ist)
 
@@ -224,7 +217,8 @@ def scan_market_upstox(tickers, interval, mode):
                     'Stoch': round(last['Stoch'], 2),
                     'VWAP': round(last['VWAP'], 2),
                     'Vol_Ratio': vol_multiplier,
-                    'Time': last['Timestamp'].strftime('%H:%M')
+                    'Time': last['Timestamp'].strftime('%H:%M'),
+                    'Raw_Data': df.tail(5) # Save for debugging table
                 })
 
         except Exception:
@@ -236,21 +230,23 @@ def scan_market_upstox(tickers, interval, mode):
     return found_stocks
 
 # --- 9. UI ---
-st.title("📡 Momentum Radar Pro (Live ⚡)")
-st.write(f"Scanning **{trend_mode}** on **{tf_selection}** | Data: **Upstox Historical**")
+st.title("📡 Momentum Radar Pro (Fixed ⚡)")
+st.write(f"Scanning **{trend_mode}** on **{tf_selection}**")
 
 if st.button('🚀 START SCAN') or use_autorefresh:
     if not store.access_token:
         st.warning("⚠️ Waiting for Admin Token...")
     else:
-        with st.spinner('Scanning Market...'):
+        with st.spinner('Calculating VWAP & Sorting Data...'):
             results = scan_market_upstox(all_tickers, interval_str, trend_mode)
         
         if results:
             st.success(f"Found {len(results)} Stocks!")
-            cols = st.columns(3)
-            for i, stock in enumerate(results):
-                with cols[i % 3]:
+            
+            for stock in results:
+                cols = st.columns([3, 1])
+                
+                with cols[0]:
                     tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{stock['Symbol']}"
                     card_class = "buy-card" if trend_mode == "Bullish (Buy)" else "sell-card"
                     text_class = "buy-text" if trend_mode == "Bullish (Buy)" else "sell-text"
@@ -270,5 +266,12 @@ if st.button('🚀 START SCAN') or use_autorefresh:
                             </div>
                         </div>
                     </div>""", unsafe_allow_html=True)
+
+                # --- DEBUG TABLE (VERY HELPFUL) ---
+                if show_debug:
+                    st.write(f"🔍 **Verifying Data for {stock['Symbol']}:**")
+                    debug_df = stock['Raw_Data'][['Timestamp', 'Close', 'VWAP', 'Stoch']].copy()
+                    st.dataframe(debug_df.style.format("{:.2f}", subset=['Close', 'VWAP', 'Stoch']))
+                    st.markdown("---")
         else:
             st.info(f"Market is sideways. No stocks match criteria on {tf_selection}.")
