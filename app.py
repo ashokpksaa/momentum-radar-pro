@@ -77,7 +77,7 @@ if admin_pass == "1234":
         st.sidebar.success("Saved!")
         st.rerun()
 
-    # --- DEBUGGING BUTTON (SIRF ADMIN KE LIYE) ---
+    # --- DEBUGGING BUTTON (FIXED) ---
     st.sidebar.markdown("---")
     if st.sidebar.button("🛠️ Test API Connection"):
         if not store.access_token:
@@ -89,14 +89,20 @@ if admin_pass == "1234":
                 conf.access_token = store.access_token
                 api = upstox_client.HistoryApi(upstox_client.ApiClient(conf))
                 
-                # Check SBIN Data
                 key = get_instrument_key("SBIN")
                 if not key:
                     st.sidebar.error("Instrument List Error!")
                 else:
                     today = datetime.datetime.now().strftime("%Y-%m-%d")
                     prev = (datetime.datetime.now() - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
-                    res = api.get_intra_day_candle_data(instrument_key=key, interval="30minute", to_date=today, from_date=prev)
+                    # FIXED LINE BELOW: Added api_version='2.0'
+                    res = api.get_intra_day_candle_data(
+                        instrument_key=key, 
+                        interval="30minute", 
+                        to_date=today, 
+                        from_date=prev,
+                        api_version='2.0'
+                    )
                     
                     if res.data and res.data.candles:
                         st.sidebar.success(f"Success! Data Received. Last Price: {res.data.candles[0][4]}")
@@ -155,8 +161,13 @@ def scan_market_upstox(tickers, interval, mode):
             inst_key = get_instrument_key(symbol)
             if not inst_key: continue
 
+            # FIXED LINE BELOW: Added api_version='2.0'
             api_response = api_instance.get_intra_day_candle_data(
-                instrument_key=inst_key, interval=interval, to_date=to_date, from_date=from_date
+                instrument_key=inst_key, 
+                interval=interval, 
+                to_date=to_date, 
+                from_date=from_date,
+                api_version='2.0'
             )
             
             if not api_response.data or not api_response.data.candles: continue
