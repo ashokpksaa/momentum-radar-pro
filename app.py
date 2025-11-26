@@ -32,7 +32,7 @@ def get_instrument_list():
         return None
 
 if store.instrument_df is None:
-    with st.spinner("Loading Stocks..."):
+    with st.spinner("Loading Stock List..."):
         store.instrument_df = get_instrument_list()
 
 def get_instrument_key(symbol):
@@ -67,35 +67,23 @@ if admin_pass == "1234":
     if st.sidebar.button("Save Token"):
         store.access_token = new_token
         st.rerun()
-
-    st.sidebar.markdown("---")
-    st.sidebar.write("🛠️ **Debugger**")
-    test_symbol = st.sidebar.text_input("Test Symbol", value="PIIND")
     
-    if st.sidebar.button("Check Live Data"):
+    # Debugger
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Test Connection (SBIN)"):
         if store.access_token:
-            key = get_instrument_key(test_symbol)
-            if key:
-                url = f"https://api.upstox.com/v2/historical-candle/intraday/{key}/1minute"
-                headers = {'Accept': 'application/json', 'Api-Version': '2.0', 'Authorization': f'Bearer {store.access_token}'}
-                res = requests.get(url, headers=headers)
-                data = res.json()
-                
-                if 'data' in data and 'candles' in data['data']:
-                    candles = data['data']['candles']
-                    df = pd.DataFrame(candles, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'OI'])
-                    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-                    df = df.sort_values('Timestamp').reset_index(drop=True)
-                    ist = pytz.timezone('Asia/Kolkata')
-                    df['Timestamp'] = df['Timestamp'].dt.tz_convert(ist)
-                    
-                    last = df.iloc[-1]
-                    st.sidebar.success(f"Latest Data for {test_symbol}:")
-                    st.sidebar.write(f"📅 Date: {last['Timestamp'].date()}")
-                    st.sidebar.write(f"🕒 Time: {last['Timestamp'].time()}")
-                    st.sidebar.write(f"💰 Close: {last['Close']}")
-                else:
-                    st.sidebar.error("API Error or No Data")
+            key = get_instrument_key("SBIN")
+            # STANDARD URL STRUCTURE (Fixed 400 Error)
+            end = datetime.datetime.now().strftime("%Y-%m-%d")
+            start = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
+            url = f"https://api.upstox.com/v2/historical-candle/{key}/30minute/{end}/{start}"
+            headers = {'Accept': 'application/json', 'Api-Version': '2.0', 'Authorization': f'Bearer {store.access_token}'}
+            res = requests.get(url, headers=headers)
+            if res.status_code == 200:
+                st.sidebar.success("Connection Successful!")
+                st.sidebar.write(res.json()['data']['candles'][0])
+            else:
+                st.sidebar.error(f"Error: {res.status_code} - {res.text}")
 
 # --- 6. SETTINGS ---
 use_autorefresh = st.sidebar.checkbox("Auto-Refresh")
@@ -115,7 +103,7 @@ all_tickers = ['ADANIENT', 'ADANIPORTS', 'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK',
 # --- 7. SCANNER ---
 def scan_market(tickers, interval, mode):
     found_stocks = []
-    logs = [] # To store why stocks failed
+    logs = []
     
     if not store.access_token:
         st.error("Admin Token Required")
@@ -125,6 +113,11 @@ def scan_market(tickers, interval, mode):
     status = st.empty()
     headers = {'Accept': 'application/json', 'Api-Version': '2.0', 'Authorization': f'Bearer {store.access_token}'}
 
+    # --- DATE CALCULATION (The Fix for 400 Error) ---
+    # Upstox wants explicit dates. We give today + last 10 days.
+    to_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    from_date = (datetime.datetime.now() - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
+
     for i, symbol in enumerate(tickers):
         status.text(f"Scanning {symbol}...")
         progress.progress((i+1)/len(tickers))
@@ -133,23 +126,25 @@ def scan_market(tickers, interval, mode):
             key = get_instrument_key(symbol)
             if not key: continue
 
-            # API Call
-            url = f"https://api.upstox.com/v2/historical-candle/intraday/{key}/{interval}"
+            # FIXED URL: Using standard Historical endpoint with DATES
+            # This works for ALL timeframes without 400 error
+            url = f"https://api.upstox.com/v2/historical-candle/{key}/{interval}/{to_date}/{from_date}"
+            
             response = requests.get(url, headers=headers)
             
-            if response.status_code != 200: 
+            if response.status_code != 200:
                 logs.append(f"{symbol}: API Error {response.status_code}")
                 continue
             
             data = response.json()
-            if 'data' not in data or 'candles' not in data['data']: 
+            if 'data' not in data or 'candles' not in data['data']:
                 logs.append(f"{symbol}: No Data")
                 continue
 
             candles = data['data']['candles']
             df = pd.DataFrame(candles, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'OI'])
             
-            # 1. Clean & Sort
+            # Clean & Sort
             df['Timestamp'] = pd.to_datetime(df['Timestamp'])
             df = df.sort_values('Timestamp').reset_index(drop=True)
             ist = pytz.timezone('Asia/Kolkata')
@@ -158,69 +153,51 @@ def scan_market(tickers, interval, mode):
             # --- INDICATORS ---
             df['Date'] = df['Timestamp'].dt.date
             
-            # VWAP Logic (Simplified)
+            # Intraday VWAP Logic
             df['TP'] = (df['High'] + df['Low'] + df['Close']) / 3
-            df['Vol_Price'] = df['TP'] * df['Volume']
-            # Group by date for cumsum
-            df['Cum_Vol_Price'] = df.groupby('Date')['Vol_Price'].cumsum()
+            df['Cum_Vol_Price'] = df.groupby('Date').apply(lambda x: (x['TP'] * x['Volume']).cumsum()).reset_index(level=0, drop=True)
             df['Cum_Vol'] = df.groupby('Date')['Volume'].cumsum()
             df['VWAP'] = df['Cum_Vol_Price'] / df['Cum_Vol']
 
             # Stoch & Vol
             low_14 = df['Low'].rolling(14).min()
             high_14 = df['High'].rolling(14).max()
-            df['%K'] = 100 * ((df['Close'] - low_14) / (high_max - low_14))
+            df['%K'] = 100 * ((df['Close'] - low_14) / (high_14 - low_14))
             df['Stoch'] = df['%K'].rolling(3).mean()
             df['Vol_Avg'] = df['Volume'].rolling(20).mean()
 
             last = df.iloc[-1]
             if pd.isna(last['VWAP']) or pd.isna(last['Stoch']): 
-                logs.append(f"{symbol}: Insufficient Data for Indicators")
+                logs.append(f"{symbol}: Calculating...")
                 continue
 
-            # --- LOGIC & REASONING ---
-            close_p = last['Close']
-            vwap_p = last['VWAP']
-            vol_now = last['Volume']
-            vol_avg = last['Vol_Avg']
-            stoch = last['Stoch']
+            # --- LOGIC ---
+            cond_vol = last['Volume'] > last['Vol_Avg']
+            cond_stoch = 20 < last['Stoch'] < 80
             
-            cond_vol = vol_now > vol_avg
-            cond_stoch = 20 < stoch < 80
-            
-            # Detailed Logging for Debugging
-            reason = []
             is_match = False
+            reason = []
             
             if mode == "Bullish (Buy)":
-                if close_p <= vwap_p: reason.append(f"Price {close_p} <= VWAP {round(vwap_p,1)}")
-                if not cond_vol: reason.append(f"Vol {vol_now} < Avg {round(vol_avg,0)}")
-                if not cond_stoch: reason.append(f"Stoch {round(stoch,1)} out of range")
-                
-                if not reason: is_match = True
-            
-            else: # Bearish
-                if close_p >= vwap_p: reason.append(f"Price {close_p} >= VWAP {round(vwap_p,1)}")
-                if not cond_vol: reason.append(f"Vol {vol_now} < Avg {round(vol_avg,0)}")
-                if not cond_stoch: reason.append(f"Stoch {round(stoch,1)} out of range")
-                
-                if not reason: is_match = True
+                if last['Close'] > last['VWAP'] and cond_vol and cond_stoch: is_match = True
+            else:
+                if last['Close'] < last['VWAP'] and cond_vol and cond_stoch: is_match = True
             
             if is_match:
                 found_stocks.append({
                     'Symbol': symbol,
-                    'Price': close_p,
-                    'Time': last['Timestamp'].strftime('%H:%M:%S'),
+                    'Price': last['Close'],
+                    'Time': last['Timestamp'].strftime('%H:%M'),
                     'Date': last['Timestamp'].strftime('%Y-%m-%d'),
-                    'VWAP': round(vwap_p, 2),
-                    'Stoch': round(stoch, 2),
-                    'Vol_Ratio': round(vol_now / vol_avg, 2)
+                    'VWAP': round(last['VWAP'], 2),
+                    'Stoch': round(last['Stoch'], 2),
+                    'Vol_Ratio': round(last['Volume'] / last['Vol_Avg'], 2)
                 })
             else:
-                logs.append(f"❌ {symbol}: {', '.join(reason)}")
+                logs.append(f"{symbol}: No Match")
 
         except Exception as e:
-            logs.append(f"⚠️ {symbol}: Crash - {str(e)}")
+            logs.append(f"{symbol}: Error {str(e)}")
             pass
             
     progress.empty()
@@ -240,11 +217,14 @@ if st.button("🚀 SCAN NOW"):
         st.success(f"Found {len(results)} Stocks")
         for stock in results:
             css = "buy-card" if trend_mode == "Bullish (Buy)" else "sell-card"
+            tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{stock['Symbol']}"
             st.markdown(f"""
             <div class="{css}">
                 <div style="display:flex; justify-content:space-between;">
-                    <span style="font-size:22px; font-weight:bold; color:white;">{stock['Symbol']}</span>
-                    <span class="time-badge">🕒 {stock['Time']} ({stock['Date']})</span>
+                    <span style="font-size:22px; font-weight:bold; color:white;">
+                        <a href="{tv_link}" target="_blank" style="color:white;text-decoration:none;">{stock['Symbol']} 🔗</a>
+                    </span>
+                    <span class="time-badge">🕒 {stock['Time']}</span>
                 </div>
                 <div class="stock-price">₹{stock['Price']}</div>
                 <div style="color:#ccc; font-size:14px;">
@@ -253,9 +233,6 @@ if st.button("🚀 SCAN NOW"):
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.warning("No matches found. Check Sidebar for reasons 👇")
-    
-    # Show Logs in Sidebar if no results or for debug
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🔍 Scan Logs (Why stocks failed)")
-    st.sidebar.text_area("Logs", "\n".join(debug_logs), height=300)
+        st.warning("No matches found.")
+        with st.expander("Show Scan Logs (Why stocks failed)"):
+            st.write(debug_logs)
