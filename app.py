@@ -7,7 +7,7 @@ import io
 import pytz
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(page_title="Momentum Radar (1-Min Live)", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Pro Live Scanner (1-Min)", layout="wide", page_icon="⚡")
 
 # --- 2. GLOBAL STORE ---
 @st.cache_resource
@@ -31,7 +31,7 @@ def get_instrument_list():
         return None
 
 if store.instrument_df is None:
-    with st.spinner("Loading Stock List..."):
+    with st.spinner("Downloading 91 Stocks List..."):
         store.instrument_df = get_instrument_list()
 
 def get_instrument_key(symbol):
@@ -62,147 +62,137 @@ st.sidebar.title("⚙️ Admin")
 admin_pass = st.sidebar.text_input("Login", type="password")
 
 if admin_pass == "1234":
-    new_token = st.sidebar.text_area("Token:", value=store.access_token if store.access_token else "")
+    new_token = st.sidebar.text_area("Upstox Token:", value=store.access_token if store.access_token else "")
     if st.sidebar.button("Save Token"):
         store.access_token = new_token
         st.rerun()
 
-    st.sidebar.markdown("---")
-    st.sidebar.write("🛠️ **Live Check**")
-    if st.sidebar.button("Check 1-Min Data (PIIND)"):
-        if store.access_token:
-            key = get_instrument_key("PIIND")
-            if key:
-                # Using the ERROR-FREE Intraday Endpoint
-                url = f"https://api.upstox.com/v2/historical-candle/intraday/{key}/1minute"
-                headers = {'Accept': 'application/json', 'Api-Version': '2.0', 'Authorization': f'Bearer {store.access_token}'}
-                res = requests.get(url, headers=headers)
-                if res.status_code == 200:
-                    data = res.json()
-                    last = data['data']['candles'][0] # Upstox Intraday sends Latest First
-                    st.sidebar.success(f"Latest: {last}")
-                else:
-                    st.sidebar.error(f"Error: {res.status_code}")
-
 # --- 6. SETTINGS ---
-use_autorefresh = st.sidebar.checkbox("Auto-Refresh (1 min)")
-if use_autorefresh:
-    st_autorefresh(interval=60000)
+# AUTO REFRESH SET TO 60 SECONDS
+st_autorefresh(interval=60000, key="market_scanner")
 
-trend_mode = st.sidebar.radio("Signal:", ("Bullish (Buy)", "Bearish (Sell)"))
+trend_mode = st.sidebar.radio("Signal Mode:", ("Bullish (Buy)", "Bearish (Sell)"))
 
-# Hardcoded Stock List
+# --- 7. STOCK LIST (91 Stocks) ---
 all_tickers = ['ADANIENT', 'ADANIPORTS', 'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK', 'BAJAJ-AUTO', 'BAJFINANCE', 'BAJAJFINSV', 'BPCL', 'BHARTIARTL', 'BRITANNIA', 'CIPLA', 'COALINDIA', 'DIVISLAB', 'DRREDDY', 'EICHERMOT', 'GRASIM', 'HCLTECH', 'HDFCBANK', 'HDFCLIFE', 'HEROMOTOCO', 'HINDALCO', 'HINDUNILVR', 'ICICIBANK', 'ITC', 'INDUSINDBK', 'INFY', 'JSWSTEEL', 'KOTAKBANK', 'LT', 'LTIM', 'M&M', 'MARUTI', 'NESTLEIND', 'NTPC', 'ONGC', 'POWERGRID', 'RELIANCE', 'SBILIFE', 'SBIN', 'SUNPHARMA', 'TCS', 'TATACONSUM', 'TATAMOTORS', 'TATASTEEL', 'TECHM', 'TITAN', 'ULTRACEMCO', 'UPL', 'WIPRO', 'BANKBARODA', 'PNB', 'AUBANK', 'IDFCFIRSTB', 'FEDERALBNK', 'BANDHANBNK', 'POLYCAB', 'TATACOMM', 'PERSISTENT', 'COFORGE', 'LTTS', 'MPHASIS', 'ASHOKLEY', 'ASTRAL', 'JUBLFOOD', 'VOLTAS', 'TRENT', 'BEL', 'HAL', 'DLF', 'GODREJPROP', 'INDHOTEL', 'TATACHEM', 'TATAPOWER', 'JINDALSTEL', 'SAIL', 'NMDC', 'ZEEL', 'CANBK', 'REC', 'PFC', 'IRCTC', 'BOSCHLTD', 'CUMMINSIND', 'OBEROIRLTY', 'ESCORTS', 'SRF', 'PIIND', 'CONCOR', 'AUROPHARMA', 'LUPIN']
 
-# --- 7. SCANNER (ONLY 1 MINUTE - ERROR FREE) ---
+# --- 8. SCANNER LOGIC ---
 def scan_market(tickers, mode):
-    found_stocks = []
-    logs = []
+    matches = []
+    all_data = [] # To store data of ALL stocks for verification
     
     if not store.access_token:
-        st.error("Admin Token Required")
+        st.error("⚠️ Admin Token Required in Sidebar")
         return [], []
 
     progress = st.progress(0)
     status = st.empty()
     headers = {'Accept': 'application/json', 'Api-Version': '2.0', 'Authorization': f'Bearer {store.access_token}'}
+    total = len(tickers)
 
     for i, symbol in enumerate(tickers):
-        status.text(f"Scanning {symbol}...")
-        progress.progress((i+1)/len(tickers))
+        status.text(f"Scanning {symbol} ({i+1}/{total})...")
+        progress.progress((i+1)/total)
 
         try:
             key = get_instrument_key(symbol)
             if not key: continue
 
-            # --- THE MAGIC URL (No Dates, No Errors) ---
+            # Intraday API (No Date Issues)
             url = f"https://api.upstox.com/v2/historical-candle/intraday/{key}/1minute"
-            
             response = requests.get(url, headers=headers)
             
-            if response.status_code != 200:
-                continue # Skip errors silently
+            if response.status_code != 200: continue
             
             data = response.json()
-            if 'data' not in data or 'candles' not in data['data']:
-                continue
+            if 'data' not in data or 'candles' not in data['data']: continue
 
             candles = data['data']['candles']
             df = pd.DataFrame(candles, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'OI'])
             
-            # 1. Clean & Sort (Oldest -> Newest for Calc)
+            # Cleaning
             df['Timestamp'] = pd.to_datetime(df['Timestamp'])
             df = df.sort_values('Timestamp').reset_index(drop=True)
-            
-            # 2. Timezone IST
             ist = pytz.timezone('Asia/Kolkata')
             df['Timestamp'] = df['Timestamp'].dt.tz_convert(ist)
 
-            # --- INDICATORS ---
+            # Indicators
             df['Date'] = df['Timestamp'].dt.date
-            
-            # Intraday VWAP
             df['TP'] = (df['High'] + df['Low'] + df['Close']) / 3
-            df['Cum_Vol_Price'] = df.groupby('Date').apply(lambda x: (x['TP'] * x['Volume']).cumsum()).reset_index(level=0, drop=True)
+            df['Vol_Price'] = df['TP'] * df['Volume']
+            df['Cum_Vol_Price'] = df.groupby('Date')['Vol_Price'].cumsum()
             df['Cum_Vol'] = df.groupby('Date')['Volume'].cumsum()
             df['VWAP'] = df['Cum_Vol_Price'] / df['Cum_Vol']
 
-            # Stoch & Vol
             low_14 = df['Low'].rolling(14).min()
-            high_14 = df['High'].rolling(14).max() # Variable FIXED
-            
-            # Zero Division Check
+            high_14 = df['High'].rolling(14).max()
             denom = high_14 - low_14
             denom = denom.replace(0, 0.001)
-
             df['%K'] = 100 * ((df['Close'] - low_14) / denom)
             df['Stoch'] = df['%K'].rolling(3).mean()
             df['Vol_Avg'] = df['Volume'].rolling(20).mean()
 
             last = df.iloc[-1]
-            
-            # --- LOGIC ---
             if pd.isna(last['VWAP']) or pd.isna(last['Stoch']): continue
 
+            # Logic
             cond_vol = last['Volume'] > last['Vol_Avg']
             cond_stoch = 20 < last['Stoch'] < 80
             
             is_match = False
+            status_msg = "Weak"
             
             if mode == "Bullish (Buy)":
-                if last['Close'] > last['VWAP'] and cond_vol and cond_stoch: is_match = True
+                if last['Close'] > last['VWAP'] and cond_vol and cond_stoch: 
+                    is_match = True
+                    status_msg = "Match ✅"
+                elif last['Close'] <= last['VWAP']: status_msg = "Below VWAP"
+                elif not cond_vol: status_msg = "Low Vol"
+                elif not cond_stoch: status_msg = "Stoch Range"
             else:
-                if last['Close'] < last['VWAP'] and cond_vol and cond_stoch: is_match = True
+                if last['Close'] < last['VWAP'] and cond_vol and cond_stoch: 
+                    is_match = True
+                    status_msg = "Match ✅"
+                elif last['Close'] >= last['VWAP']: status_msg = "Above VWAP"
+                elif not cond_vol: status_msg = "Low Vol"
+
+            # Save Data
+            stock_data = {
+                'Symbol': symbol,
+                'Price': last['Close'],
+                'Time': last['Timestamp'].strftime('%H:%M'),
+                'VWAP': round(last['VWAP'], 2),
+                'Stoch': round(last['Stoch'], 2),
+                'Vol': last['Volume'],
+                'Vol_Avg': round(last['Vol_Avg'], 0),
+                'Vol_Ratio': round(last['Volume'] / last['Vol_Avg'], 2),
+                'Status': status_msg
+            }
+            
+            all_data.append(stock_data)
             
             if is_match:
-                found_stocks.append({
-                    'Symbol': symbol,
-                    'Price': last['Close'],
-                    'Time': last['Timestamp'].strftime('%H:%M:%S'),
-                    'Date': last['Timestamp'].strftime('%Y-%m-%d'),
-                    'VWAP': round(last['VWAP'], 2),
-                    'Stoch': round(last['Stoch'], 2),
-                    'Vol_Ratio': round(last['Volume'] / last['Vol_Avg'], 2)
-                })
+                matches.append(stock_data)
 
         except:
             pass
             
     progress.empty()
     status.empty()
-    found_stocks.sort(key=lambda x: x['Vol_Ratio'], reverse=True)
-    return found_stocks, logs
+    matches.sort(key=lambda x: x['Vol_Ratio'], reverse=True)
+    return matches, all_data
 
-# --- 8. UI ---
-st.title("⚡ 1-Minute Live Scanner")
-st.write(f"Scanning for **{trend_mode}** momentum")
+# --- 9. UI ---
+st.title("⚡ Pro 1-Min Scanner (All 91 Stocks)")
+st.write(f"Mode: **{trend_mode}** | Auto-Refresh: **60s**")
 
 if st.button("🚀 SCAN NOW"):
     with st.spinner("Analyzing Live Data..."):
-        results, _ = scan_market(all_tickers, trend_mode)
+        results, full_data = scan_market(all_tickers, trend_mode)
     
+    # 1. SHOW MATCHES
     if results:
-        st.success(f"Found {len(results)} Stocks")
+        st.success(f"🔥 Found {len(results)} Perfect Matches")
         for stock in results:
             css = "buy-card" if trend_mode == "Bullish (Buy)" else "sell-card"
             tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{stock['Symbol']}"
@@ -221,4 +211,13 @@ if st.button("🚀 SCAN NOW"):
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.warning("No matches found.")
+        st.warning("No Perfect Matches Found right now.")
+
+    # 2. SHOW ALL DATA (USER REQUIREMENT)
+    st.markdown("---")
+    st.subheader("📋 All 91 Stocks Status")
+    if full_data:
+        df_all = pd.DataFrame(full_data)
+        # Reorder columns
+        df_all = df_all[['Symbol', 'Price', 'Status', 'VWAP', 'Stoch', 'Vol_Ratio', 'Time']]
+        st.dataframe(df_all, use_container_width=True)
