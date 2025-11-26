@@ -175,4 +175,73 @@ def scan_market_upstox(tickers, interval, mode):
             # Manual Indicators
             df['TP'] = (df['High'] + df['Low'] + df['Close']) / 3
             df['Cum_Vol_Price'] = (df['TP'] * df['Volume']).cumsum()
-            df['Cum_
+            df['Cum_Vol'] = df['Volume'].cumsum()
+            df['VWAP'] = df['Cum_Vol_Price'] / df['Cum_Vol']
+            
+            low_min = df['Low'].rolling(window=14).min()
+            high_max = df['High'].rolling(window=14).max()
+            df['%K'] = 100 * ((df['Close'] - low_min) / (high_max - low_min))
+            df['Stoch'] = df['%K'].rolling(window=3).mean()
+            df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
+
+            last = df.iloc[-1]
+            if pd.isna(last['VWAP']) or pd.isna(last['Stoch']): continue
+
+            # Logic
+            cond_vol = last['Volume'] > last['Vol_Avg']
+            cond_stoch = 20 < last['Stoch'] < 80
+            
+            is_match = False
+            if mode == "Bullish (Buy)":
+                if last['Close'] > last['VWAP'] and cond_vol and cond_stoch: is_match = True
+            else:
+                if last['Close'] < last['VWAP'] and cond_vol and cond_stoch: is_match = True
+
+            if is_match:
+                vol_multiplier = round(last['Volume'] / last['Vol_Avg'], 2)
+                found_stocks.append({
+                    'Symbol': symbol,
+                    'Price': round(last['Close'], 2),
+                    'Stoch': round(last['Stoch'], 2),
+                    'VWAP': round(last['VWAP'], 2),
+                    'Vol_Ratio': vol_multiplier
+                })
+
+        except Exception:
+            pass
+            
+    progress_bar.empty()
+    status.empty()
+    found_stocks.sort(key=lambda x: x['Vol_Ratio'], reverse=True)
+    return found_stocks
+
+# --- 9. UI ---
+st.title("📡 Momentum Radar Pro (Live ⚡)")
+st.write(f"Scanning **{trend_mode}** | Source: **Upstox API**")
+
+if st.button('🚀 START LIVE SCAN') or use_autorefresh:
+    if not store.access_token:
+        st.warning("⚠️ Waiting for Admin Token...")
+    else:
+        with st.spinner('Fetching Live Data...'):
+            results = scan_market_upstox(all_tickers, interval_str, trend_mode)
+        
+        if results:
+            st.success(f"Found {len(results)} Stocks!")
+            cols = st.columns(3)
+            for i, stock in enumerate(results):
+                with cols[i % 3]:
+                    tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{stock['Symbol']}"
+                    card_class = "buy-card" if trend_mode == "Bullish (Buy)" else "sell-card"
+                    text_class = "buy-text" if trend_mode == "Bullish (Buy)" else "sell-text"
+                    st.markdown(f"""
+                    <div class="{card_class}">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div class="stock-symbol"><a href="{tv_link}" target="_blank">{stock['Symbol']} 🔗</a></div>
+                            <div class="vol-badge">⚡ {stock['Vol_Ratio']}x Vol</div>
+                        </div>
+                        <div class="stock-price {text_class}">₹{stock['Price']}</div>
+                        <div class="stock-info">📊 Stoch: {stock['Stoch']}<br>🌊 VWAP: {stock['VWAP']}</div>
+                    </div>""", unsafe_allow_html=True)
+        else:
+            st.info("Market is sideways. No high-momentum stocks found.")
