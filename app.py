@@ -93,14 +93,10 @@ if admin_pass == "1234":
                 if not key:
                     st.sidebar.error("Instrument List Error!")
                 else:
-                    today = datetime.datetime.now().strftime("%Y-%m-%d")
-                    prev = (datetime.datetime.now() - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
-                    # FIXED LINE BELOW: Added api_version='2.0'
+                    # FIX: Removed dates, kept only api_version
                     res = api.get_intra_day_candle_data(
                         instrument_key=key, 
                         interval="30minute", 
-                        to_date=today, 
-                        from_date=prev,
                         api_version='2.0'
                     )
                     
@@ -150,9 +146,6 @@ def scan_market_upstox(tickers, interval, mode):
     status = st.empty()
     total = len(tickers)
 
-    to_date = datetime.datetime.now().strftime("%Y-%m-%d")
-    from_date = (datetime.datetime.now() - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
-
     for i, symbol in enumerate(tickers):
         status.text(f"Scanning {symbol}...")
         progress_bar.progress((i + 1) / total)
@@ -161,12 +154,10 @@ def scan_market_upstox(tickers, interval, mode):
             inst_key = get_instrument_key(symbol)
             if not inst_key: continue
 
-            # FIXED LINE BELOW: Added api_version='2.0'
+            # FIX: Removed to_date/from_date
             api_response = api_instance.get_intra_day_candle_data(
                 instrument_key=inst_key, 
-                interval=interval, 
-                to_date=to_date, 
-                from_date=from_date,
+                interval=interval,
                 api_version='2.0'
             )
             
@@ -176,79 +167,12 @@ def scan_market_upstox(tickers, interval, mode):
             columns = ['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'OI']
             df = pd.DataFrame(candles, columns=columns)
             
-            # REVERSE DATA (Chronological Order)
+            # REVERSE DATA (Latest at bottom for calculation, but Upstox gives Latest at Top)
+            # Upstox gives: [Latest, Old, Older...]
+            # We need: [Older, Old, Latest] for rolling window
             df = df[::-1].reset_index(drop=True)
 
             # Manual Indicators
             df['TP'] = (df['High'] + df['Low'] + df['Close']) / 3
             df['Cum_Vol_Price'] = (df['TP'] * df['Volume']).cumsum()
-            df['Cum_Vol'] = df['Volume'].cumsum()
-            df['VWAP'] = df['Cum_Vol_Price'] / df['Cum_Vol']
-            
-            low_min = df['Low'].rolling(window=14).min()
-            high_max = df['High'].rolling(window=14).max()
-            df['%K'] = 100 * ((df['Close'] - low_min) / (high_max - low_min))
-            df['Stoch'] = df['%K'].rolling(window=3).mean()
-            df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
-
-            last = df.iloc[-1]
-            if pd.isna(last['VWAP']) or pd.isna(last['Stoch']): continue
-
-            # Logic
-            cond_vol = last['Volume'] > last['Vol_Avg']
-            cond_stoch = 20 < last['Stoch'] < 80
-            
-            is_match = False
-            if mode == "Bullish (Buy)":
-                if last['Close'] > last['VWAP'] and cond_vol and cond_stoch: is_match = True
-            else:
-                if last['Close'] < last['VWAP'] and cond_vol and cond_stoch: is_match = True
-
-            if is_match:
-                vol_multiplier = round(last['Volume'] / last['Vol_Avg'], 2)
-                found_stocks.append({
-                    'Symbol': symbol,
-                    'Price': round(last['Close'], 2),
-                    'Stoch': round(last['Stoch'], 2),
-                    'VWAP': round(last['VWAP'], 2),
-                    'Vol_Ratio': vol_multiplier
-                })
-
-        except Exception:
-            pass
-            
-    progress_bar.empty()
-    status.empty()
-    found_stocks.sort(key=lambda x: x['Vol_Ratio'], reverse=True)
-    return found_stocks
-
-# --- 9. UI ---
-st.title("📡 Momentum Radar Pro (Live ⚡)")
-st.write(f"Scanning **{trend_mode}** | Source: **Upstox API**")
-
-if st.button('🚀 START LIVE SCAN') or use_autorefresh:
-    if not store.access_token:
-        st.warning("⚠️ Waiting for Admin Token...")
-    else:
-        with st.spinner('Fetching Live Data...'):
-            results = scan_market_upstox(all_tickers, interval_str, trend_mode)
-        
-        if results:
-            st.success(f"Found {len(results)} Stocks!")
-            cols = st.columns(3)
-            for i, stock in enumerate(results):
-                with cols[i % 3]:
-                    tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{stock['Symbol']}"
-                    card_class = "buy-card" if trend_mode == "Bullish (Buy)" else "sell-card"
-                    text_class = "buy-text" if trend_mode == "Bullish (Buy)" else "sell-text"
-                    st.markdown(f"""
-                    <div class="{card_class}">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <div class="stock-symbol"><a href="{tv_link}" target="_blank">{stock['Symbol']} 🔗</a></div>
-                            <div class="vol-badge">⚡ {stock['Vol_Ratio']}x Vol</div>
-                        </div>
-                        <div class="stock-price {text_class}">₹{stock['Price']}</div>
-                        <div class="stock-info">📊 Stoch: {stock['Stoch']}<br>🌊 VWAP: {stock['VWAP']}</div>
-                    </div>""", unsafe_allow_html=True)
-        else:
-            st.info("Market is sideways. No high-momentum stocks found.")
+            df['Cum_
