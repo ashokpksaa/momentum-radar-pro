@@ -5,10 +5,10 @@ import requests
 import gzip
 import io
 import pytz
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(page_title="SniperTrade Live 🎯", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="SniperTrade (5-Min) 🎯", layout="wide", page_icon="🎯")
 
 # --- 2. GLOBAL STORE ---
 @st.cache_resource
@@ -32,7 +32,7 @@ def get_instrument_list():
         return None
 
 if store.instrument_df is None:
-    with st.spinner("Calibrating Sniper Scope..."):
+    with st.spinner("Calibrating Sniper Scope (5-Min)..."):
         store.instrument_df = get_instrument_list()
 
 def get_instrument_key(symbol):
@@ -50,7 +50,6 @@ def get_instrument_key(symbol):
 # --- 4. CSS (PREMIUM LOOK) ---
 st.markdown("""
 <style>
-    /* Sniper Green for Buy */
     .buy-card { 
         background: linear-gradient(145deg, #0f2015, #1e1e1e);
         border: 1px solid #333; 
@@ -60,7 +59,6 @@ st.markdown("""
         border-left: 5px solid #00ff41; 
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    /* Sniper Red for Sell */
     .sell-card { 
         background: linear-gradient(145deg, #2a0f0f, #1e1e1e);
         border: 1px solid #333; 
@@ -87,10 +85,8 @@ st.markdown("""
     
     .target-txt { color: #00ff41; text-shadow: 0 0 5px rgba(0, 255, 65, 0.5); }
     .sl-txt { color: #ff4b4b; text-shadow: 0 0 5px rgba(255, 75, 75, 0.5); }
-    
     .time-badge { font-size: 11px; color: #aaa; background: #222; padding: 2px 6px; border-radius: 4px; border: 1px solid #333; }
     .indicator-row { color:#bbb; font-size:13px; margin-top:10px; border-top: 1px solid #333; padding-top: 5px; display: flex; justify-content: space-between;}
-    
     .stButton>button { width: 100%; background-color: #262730; color: white; border: 1px solid #4c4c4c; }
 </style>
 """, unsafe_allow_html=True)
@@ -106,14 +102,14 @@ if admin_pass == "1234":
         st.rerun()
 
 # --- 6. AUTO REFRESH (60 Sec) ---
-st_autorefresh(interval=60000, key="sniper_refresh")
+st_autorefresh(interval=60000, key="sniper_5min_refresh")
 
 trend_mode = st.sidebar.radio("Mission Mode:", ("Bullish (Buy)", "Bearish (Sell)"))
 
 # --- 7. STOCK LIST ---
 all_tickers = ['ADANIENT', 'ADANIPORTS', 'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK', 'BAJAJ-AUTO', 'BAJFINANCE', 'BAJAJFINSV', 'BPCL', 'BHARTIARTL', 'BRITANNIA', 'CIPLA', 'COALINDIA', 'DIVISLAB', 'DRREDDY', 'EICHERMOT', 'GRASIM', 'HCLTECH', 'HDFCBANK', 'HDFCLIFE', 'HEROMOTOCO', 'HINDALCO', 'HINDUNILVR', 'ICICIBANK', 'ITC', 'INDUSINDBK', 'INFY', 'JSWSTEEL', 'KOTAKBANK', 'LT', 'LTIM', 'M&M', 'MARUTI', 'NESTLEIND', 'NTPC', 'ONGC', 'POWERGRID', 'RELIANCE', 'SBILIFE', 'SBIN', 'SUNPHARMA', 'TCS', 'TATACONSUM', 'TATAMOTORS', 'TATASTEEL', 'TECHM', 'TITAN', 'ULTRACEMCO', 'UPL', 'WIPRO', 'BANKBARODA', 'PNB', 'AUBANK', 'IDFCFIRSTB', 'FEDERALBNK', 'BANDHANBNK', 'POLYCAB', 'TATACOMM', 'PERSISTENT', 'COFORGE', 'LTTS', 'MPHASIS', 'ASHOKLEY', 'ASTRAL', 'JUBLFOOD', 'VOLTAS', 'TRENT', 'BEL', 'HAL', 'DLF', 'GODREJPROP', 'INDHOTEL', 'TATACHEM', 'TATAPOWER', 'JINDALSTEL', 'SAIL', 'NMDC', 'ZEEL', 'CANBK', 'REC', 'PFC', 'IRCTC', 'BOSCHLTD', 'CUMMINSIND', 'OBEROIRLTY', 'ESCORTS', 'SRF', 'PIIND', 'CONCOR', 'AUROPHARMA', 'LUPIN']
 
-# --- 8. SCANNER LOGIC ---
+# --- 8. SCANNER LOGIC (5 MINUTE SPECIAL) ---
 def scan_market(tickers, mode):
     matches = []
     all_data = [] 
@@ -126,16 +122,21 @@ def scan_market(tickers, mode):
     headers = {'Accept': 'application/json', 'Api-Version': '2.0', 'Authorization': f'Bearer {store.access_token}'}
     total = len(tickers)
 
+    # --- 5 MINUTE DATE LOGIC ---
+    # Hum pichle 10 din ka data mangenge taaki indicators (SMA 20) banane ke liye enough candles hon
+    to_date = datetime.now().strftime("%Y-%m-%d")
+    from_date = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
+
     for i, symbol in enumerate(tickers):
-        if i % 5 == 0: status_text.text(f"Tracking: {symbol}...")
+        if i % 5 == 0: status_text.text(f"Tracking 5-Min: {symbol}...")
         progress.progress((i+1)/total)
 
         try:
             key = get_instrument_key(symbol)
             if not key: continue
 
-            # Intraday 1-Min API
-            url = f"https://api.upstox.com/v2/historical-candle/intraday/{key}/1minute"
+            # 5-Minute Historical API
+            url = f"https://api.upstox.com/v2/historical-candle/{key}/5minute/{to_date}/{from_date}"
             response = requests.get(url, headers=headers)
             
             if response.status_code != 200: continue
@@ -194,6 +195,8 @@ def scan_market(tickers, mode):
                     is_match = True
                     status_msg = "LOCKED 🎯"
                 elif price <= vwap_val: status_msg = "Below VWAP"
+                elif not cond_vol: status_msg = "Low Vol"
+                elif not cond_stoch: status_msg = "Stoch Range"
             
             else: # Sell Mode
                 sl_price = vwap_val
@@ -203,6 +206,7 @@ def scan_market(tickers, mode):
                     is_match = True
                     status_msg = "LOCKED 🎯"
                 elif price >= vwap_val: status_msg = "Above VWAP"
+                elif not cond_vol: status_msg = "Low Vol"
 
             stock_data = {
                 'Symbol': symbol,
@@ -231,7 +235,7 @@ def scan_market(tickers, mode):
 # --- 9. UI DISPLAY ---
 current_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%H:%M:%S")
 
-st.title(f"🎯 SniperTrade Live")
+st.title(f"🎯 SniperTrade (5-Minute Edition)")
 st.markdown(f"<div style='margin-bottom: 20px;'><b>System Status:</b> <span style='color:#00ff41'>Online 🟢</span> | <b>Last Scan:</b> {current_time}</div>", unsafe_allow_html=True)
 
 if store.access_token:
@@ -239,7 +243,7 @@ if store.access_token:
     
     # 1. SHOW MATCHES
     if results:
-        st.success(f"🔥 Targets Locked: {len(results)}")
+        st.success(f"🔥 5-Min Targets Locked: {len(results)}")
         
         cols = st.columns(3)
         for i, stock in enumerate(results):
@@ -266,7 +270,7 @@ if store.access_token:
                 </div>
                 """, unsafe_allow_html=True)
     else:
-        st.info("Scanning for High-Probability Setups... (No locks yet)")
+        st.info("Scanning 5-Min Charts... No Perfect Setups yet.")
 
     # 2. SHOW ALL DATA
     st.markdown("---")
